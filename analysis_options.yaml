@@ -15,6 +15,13 @@ linter:
   rules:
     # Re-enabled in slice 12 once dartdoc is filled in everywhere.
     public_member_api_docs: false
+    # Models reference facade symbols (e.g. `[MetaWearablesDat.startStream]`)
+    # for navigability in published dartdoc. Importing the facade in every
+    # model file would create a cycle (the facade also exports them), and
+    # rewriting the references as plain text loses the cross-link in the
+    # rendered docs. Re-evaluated alongside `public_member_api_docs` in
+    # slice 12.
+    comment_references: false
     # very_good_analysis enforces 80-col by default; we prefer ~100 columns
     # to keep type-rich Flutter widget trees and platform-channel maps
     # readable.
