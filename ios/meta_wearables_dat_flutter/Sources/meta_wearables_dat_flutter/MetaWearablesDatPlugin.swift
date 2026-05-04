@@ -157,6 +157,46 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
     case "getRegistrationState":
       result(Wearables.shared.registrationState.rawValue)
 
+    case "requestCameraPermission":
+      Task { @MainActor in
+        do {
+          let status = try await Wearables.shared.requestPermission(.camera)
+          result(status == .granted)
+        } catch let error as PermissionError {
+          result(FlutterError(
+            code: "PERMISSION_ERROR",
+            message: String(describing: error),
+            details: nil
+          ))
+        } catch {
+          result(FlutterError(
+            code: "PERMISSION_ERROR",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      }
+
+    case "getCameraPermissionStatus":
+      Task { @MainActor in
+        do {
+          let status = try await Wearables.shared.checkPermissionStatus(.camera)
+          result(status == .granted)
+        } catch let error as PermissionError {
+          result(FlutterError(
+            code: "PERMISSION_ERROR",
+            message: String(describing: error),
+            details: nil
+          ))
+        } catch {
+          result(FlutterError(
+            code: "PERMISSION_ERROR",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      }
+
     default:
       result(FlutterMethodNotImplemented)
     }

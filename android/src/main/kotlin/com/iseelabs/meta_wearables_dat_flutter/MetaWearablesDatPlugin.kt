@@ -21,10 +21,14 @@ import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
 import androidx.core.app.ActivityCompat
 import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
 import com.meta.wearable.dat.core.types.DeviceIdentifier
+import com.meta.wearable.dat.core.types.Permission
+import com.meta.wearable.dat.core.types.PermissionStatus
 import com.meta.wearable.dat.core.types.RegistrationState
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -64,6 +68,18 @@ class MetaWearablesDatPlugin :
     private var activity: Activity? = null
 
     private var pendingPermissionResult: Result? = null
+    private var pendingCameraPermissionResult: Result? = null
+
+    /**
+     * Activity-result launcher driving Meta's
+     * `Wearables.RequestPermissionContract`. Registered with the host
+     * activity's `ActivityResultRegistry` from `onAttachedToActivity` and
+     * unregistered on detach. `null` when the activity has not been
+     * attached yet, or when the activity isn't a `ComponentActivity` (in
+     * which case `requestCameraPermission` returns
+     * `MISSING_FRAGMENT_ACTIVITY`).
+     */
+    private var cameraPermissionLauncher: ActivityResultLauncher<Permission>? = null
 
     /**
      * Gated initialisation. Flips to `true` exactly once after
@@ -118,6 +134,7 @@ class MetaWearablesDatPlugin :
         activityBinding = binding
         activity = binding.activity
         binding.addRequestPermissionsResultListener(this)
+        registerCameraPermissionLauncher(binding.activity)
     }
 
     override fun onDetachedFromActivityForConfigChanges() = onDetachedFromActivity()
@@ -129,6 +146,25 @@ class MetaWearablesDatPlugin :
         activityBinding?.removeRequestPermissionsResultListener(this)
         activityBinding = null
         activity = null
+        cameraPermissionLauncher?.unregister()
+        cameraPermissionLauncher = null
+    }
+
+    private fun registerCameraPermissionLauncher(activity: Activity) {
+        if (activity !is ComponentActivity) return
+        cameraPermissionLauncher = activity.activityResultRegistry.register(
+            "meta_wearables_dat_camera_permission",
+            Wearables.RequestPermissionContract(),
+        ) { result ->
+            val pending = pendingCameraPermissionResult
+            pendingCameraPermissionResult = null
+            // Wearables.RequestPermissionContract returns
+            // `Result<PermissionStatus>` (Meta's own Result type, not
+            // kotlin.Result) so we use getOrDefault to coerce to a
+            // PermissionStatus regardless of failure shape.
+            val status = result.getOrDefault(PermissionStatus.Denied)
+            pending?.success(status == PermissionStatus.Granted)
+        }
     }
 
     // --- MethodCallHandler ----------------------------------------------------
@@ -141,6 +177,8 @@ class MetaWearablesDatPlugin :
             "startUnregistration" -> startUnregistration(result)
             "handleUrl" -> handleUrl(result)
             "getRegistrationState" -> getRegistrationState(result)
+            "requestCameraPermission" -> requestCameraPermission(result)
+            "getCameraPermissionStatus" -> getCameraPermissionStatus(result)
             else -> result.notImplemented()
         }
     }
@@ -294,6 +332,45 @@ class MetaWearablesDatPlugin :
         pluginScope.launch {
             val state = Wearables.registrationState.first()
             result.success(stateToInt(state))
+        }
+    }
+
+    // --- Camera permission ----------------------------------------------------
+
+    private fun requestCameraPermission(result: Result) {
+        val launcher = cameraPermissionLauncher
+        if (launcher == null) {
+            result.error(
+                "MISSING_FRAGMENT_ACTIVITY",
+                "Camera permission requires the host Activity to extend " +
+                    "FlutterFragmentActivity (a ComponentActivity). See " +
+                    "doc/getting_started.md for the required MainActivity " +
+                    "snippet.",
+                null,
+            )
+            return
+        }
+        if (pendingCameraPermissionResult != null) {
+            result.error(
+                "ALREADY_REQUESTING",
+                "A camera permission request is already in flight.",
+                null,
+            )
+            return
+        }
+        pendingCameraPermissionResult = result
+        launcher.launch(Permission.CAMERA)
+    }
+
+    private fun getCameraPermissionStatus(result: Result) {
+        pluginScope.launch {
+            val outcome = Wearables.checkPermissionStatus(Permission.CAMERA)
+            // Wearables.checkPermissionStatus returns Meta's own `Result`
+            // wrapper. Treat any failure as "not granted" - host apps can
+            // call requestCameraPermission to surface the underlying
+            // PermissionError, if any.
+            val status = outcome.getOrDefault(PermissionStatus.Denied)
+            result.success(status == PermissionStatus.Granted)
         }
     }
 

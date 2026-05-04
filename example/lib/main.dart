@@ -146,6 +146,23 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
+  Future<void> _requestCameraPermission() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final granted = await MetaWearablesDat.requestCameraPermission();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Camera permission: $granted')),
+      );
+    } on DatError catch (e) {
+      if (!mounted) return;
+      setState(() => _lastError = '${e.code}: ${e.message}');
+      messenger.showSnackBar(
+        SnackBar(content: Text('Camera permission error: ${e.code}')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -194,6 +211,14 @@ class _MyAppState extends State<MyApp> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 12),
+                FilledButton.tonal(
+                  onPressed:
+                      _registrationState == RegistrationState.registered
+                          ? _requestCameraPermission
+                          : null,
+                  child: const Text('Request camera permission'),
                 ),
                 if (_lastError != null) ...[
                   const SizedBox(height: 16),

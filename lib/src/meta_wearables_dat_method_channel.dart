@@ -83,6 +83,30 @@ class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
     return granted ?? false;
   }
 
+  @override
+  Future<bool> requestCameraPermission() async {
+    try {
+      final granted = await methodChannel.invokeMethod<bool>(
+        'requestCameraPermission',
+      );
+      return granted ?? false;
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<bool> getCameraPermissionStatus() async {
+    try {
+      final granted = await methodChannel.invokeMethod<bool>(
+        'getCameraPermissionStatus',
+      );
+      return granted ?? false;
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
   // --- Registration ---------------------------------------------------------
 
   @override
