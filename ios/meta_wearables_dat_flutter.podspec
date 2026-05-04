@@ -13,7 +13,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'meta_wearables_dat_flutter'
-  s.version          = '0.1.0-dev.1'
+  s.version          = '0.1.0'
   s.summary          = 'Unofficial Flutter plugin for Meta\'s Wearables Device Access Toolkit.'
   s.description      = <<-DESC
 Unofficial Flutter plugin bridging Meta's iOS and Android Wearables Device

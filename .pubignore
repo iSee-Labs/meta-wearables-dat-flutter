@@ -1,0 +1,28 @@
+# Files ignored when publishing to pub.dev.
+#
+# `.pubignore` overrides `.gitignore` for pub. We use it to keep the
+# published tarball small and on-topic: pub ships `lib/`, the platform
+# folders, and the bare `example/`. Everything else (research material,
+# polished sample apps, CI artifacts) stays out.
+
+# Vendored research material (Meta's official samples + community plugin).
+meta-glasses-research/
+
+# Polished sample apps. These live in the repo for reference but should
+# not bloat the pub tarball; consumers can fetch them from GitHub.
+samples/
+
+# IDE / editor.
+.vscode/
+.idea/
+
+# Tooling artifacts.
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.gradle/
+build/
+
+# Local properties / credentials.
+android/local.properties
+example/android/local.properties
