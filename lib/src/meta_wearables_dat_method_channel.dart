@@ -73,6 +73,16 @@ class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
     return methodChannel.invokeMethod<String>('getPlatformVersion');
   }
 
+  // --- Permissions ----------------------------------------------------------
+
+  @override
+  Future<bool> requestAndroidPermissions() async {
+    final granted = await methodChannel.invokeMethod<bool>(
+      'requestAndroidPermissions',
+    );
+    return granted ?? false;
+  }
+
   // --- Registration streams -------------------------------------------------
 
   @override

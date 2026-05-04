@@ -33,6 +33,12 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
     switch call.method {
     case "getPlatformVersion":
       result("iOS \(UIDevice.current.systemVersion)")
+    case "requestAndroidPermissions":
+      // Documented no-op on iOS: iOS uses Info.plist usage strings, not
+      // runtime permission grants, for Bluetooth and local-network. The
+      // Dart facade still expects a `bool`; we resolve to `true` so host
+      // apps can call it unconditionally.
+      result(true)
     default:
       result(FlutterMethodNotImplemented)
     }

@@ -17,6 +17,7 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   String _platformVersion = 'Unknown';
+  String? _lastPermissionResult;
 
   @override
   void initState() {
@@ -40,12 +41,52 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
+  Future<void> _requestPermissions() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final granted = await MetaWearablesDat.requestAndroidPermissions();
+      if (!mounted) return;
+      setState(() => _lastPermissionResult = granted ? 'granted' : 'denied');
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Android permissions: $granted'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      setState(() => _lastPermissionResult = 'error: ${e.code}');
+      messenger.showSnackBar(
+        SnackBar(content: Text('Permission error: ${e.code} ${e.message}')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
         appBar: AppBar(title: const Text('meta_wearables_dat_flutter example')),
-        body: Center(child: Text('Running on: $_platformVersion\n')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text('Running on: $_platformVersion'),
+                const SizedBox(height: 24),
+                FilledButton(
+                  onPressed: _requestPermissions,
+                  child: const Text('Request Android permissions'),
+                ),
+                if (_lastPermissionResult != null) ...[
+                  const SizedBox(height: 12),
+                  Text('Last result: $_lastPermissionResult'),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
