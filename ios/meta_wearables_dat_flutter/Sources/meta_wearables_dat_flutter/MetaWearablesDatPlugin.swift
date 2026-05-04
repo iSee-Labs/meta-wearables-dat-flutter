@@ -46,6 +46,10 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
   private let videoSizeHandler = PassthroughStreamHandler()
   private weak var pluginRegistrar: FlutterPluginRegistrar?
 
+  // Mock Device Kit. Lazily created on first use.
+  private var mockManager: MetaMockDeviceManager?
+  private let mockDevicesHandler = PassthroughStreamHandler()
+
   public static func register(with registrar: FlutterPluginRegistrar) {
     if !didConfigure {
       do {
@@ -86,6 +90,10 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
       name: "meta_wearables_dat_flutter/video_stream_size",
       binaryMessenger: registrar.messenger()
     )
+    let mockDevicesChannel = FlutterEventChannel(
+      name: "meta_wearables_dat_flutter/mock_devices",
+      binaryMessenger: registrar.messenger()
+    )
 
     let instance = MetaWearablesDatPlugin()
     instance.pluginRegistrar = registrar
@@ -95,6 +103,20 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
     sessionStateChannel.setStreamHandler(instance.sessionStateHandler)
     sessionErrorChannel.setStreamHandler(instance.sessionErrorHandler)
     videoSizeChannel.setStreamHandler(instance.videoSizeHandler)
+    mockDevicesChannel.setStreamHandler(instance.mockDevicesHandler)
+    instance.mockDevicesHandler.onSinkChange = { [weak instance] sink in
+      Task { @MainActor in
+        instance?.ensureMockManager().setMockDevicesSink(sink)
+      }
+    }
+  }
+
+  @MainActor
+  private func ensureMockManager() -> MetaMockDeviceManager {
+    if let manager = mockManager { return manager }
+    let manager = MetaMockDeviceManager()
+    mockManager = manager
+    return manager
   }
 
   /// Lazily builds the session manager on first use and wires its EventSinks
@@ -298,6 +320,124 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
       Task { @MainActor in
         await sessionManager?.resumeSession()
         result(nil)
+      }
+
+    case "enableMockDevice":
+      Task { @MainActor in
+        ensureMockManager().enable()
+        result(nil)
+      }
+
+    case "disableMockDevice":
+      Task { @MainActor in
+        ensureMockManager().disable()
+        result(nil)
+      }
+
+    case "pairMockRayBanMeta":
+      Task { @MainActor in
+        let uuid = ensureMockManager().pairRayBanMeta()
+        result(uuid)
+      }
+
+    case "unpairMockDevice":
+      let args = call.arguments as? [String: Any?]
+      let uuid = args?["uuid"] as? String ?? ""
+      Task { @MainActor in
+        do {
+          try ensureMockManager().unpair(uuid: uuid)
+          result(nil)
+        } catch {
+          result(FlutterError(
+            code: "MOCK_ERROR",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      }
+
+    case "mockPowerOn":
+      let args = call.arguments as? [String: Any?]
+      let uuid = args?["uuid"] as? String ?? ""
+      Task { @MainActor in
+        do {
+          try ensureMockManager().powerOn(uuid: uuid)
+          result(nil)
+        } catch {
+          result(FlutterError(
+            code: "MOCK_ERROR",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      }
+
+    case "mockDon":
+      let args = call.arguments as? [String: Any?]
+      let uuid = args?["uuid"] as? String ?? ""
+      Task { @MainActor in
+        do {
+          try ensureMockManager().don(uuid: uuid)
+          result(nil)
+        } catch {
+          result(FlutterError(
+            code: "MOCK_ERROR",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      }
+
+    case "setMockCameraFacing":
+      let args = call.arguments as? [String: Any?]
+      let uuid = args?["uuid"] as? String ?? ""
+      let facingRaw = (args?["facing"] as? String) ?? "rear"
+      let facing: CameraFacing = (facingRaw == "front") ? .front : .rear
+      Task { @MainActor in
+        do {
+          try ensureMockManager().setCameraFacing(uuid: uuid, facing: facing)
+          result(nil)
+        } catch {
+          result(FlutterError(
+            code: "MOCK_ERROR",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      }
+
+    case "setMockCameraFeed":
+      let args = call.arguments as? [String: Any?]
+      let uuid = args?["uuid"] as? String ?? ""
+      let path = args?["filePath"] as? String ?? ""
+      Task { @MainActor in
+        do {
+          try ensureMockManager().setCameraFeed(uuid: uuid, filePath: path)
+          result(nil)
+        } catch {
+          result(FlutterError(
+            code: "MOCK_ERROR",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      }
+
+    case "setMockCapturedImage":
+      let args = call.arguments as? [String: Any?]
+      let uuid = args?["uuid"] as? String ?? ""
+      let path = args?["filePath"] as? String ?? ""
+      Task { @MainActor in
+        do {
+          try ensureMockManager().setCapturedImage(uuid: uuid, filePath: path)
+          result(nil)
+        } catch {
+          result(FlutterError(
+            code: "MOCK_ERROR",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
       }
 
     case "capturePhoto":

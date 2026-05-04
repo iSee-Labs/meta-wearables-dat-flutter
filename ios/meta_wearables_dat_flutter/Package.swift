@@ -29,6 +29,7 @@ let package = Package(
       dependencies: [
         .product(name: "MWDATCore", package: "meta-wearables-dat-ios"),
         .product(name: "MWDATCamera", package: "meta-wearables-dat-ios"),
+        .product(name: "MWDATMockDevice", package: "meta-wearables-dat-ios"),
       ],
       resources: []
     ),

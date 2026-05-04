@@ -74,6 +74,9 @@ android {
     dependencies {
         implementation("com.meta.wearable:mwdat-core:$mwdat_version")
         implementation("com.meta.wearable:mwdat-camera:$mwdat_version")
+        // Slice 10: Mock Device Kit support. Pulled in unconditionally;
+        // Meta's Android SDK ships the mock module alongside core/camera.
+        implementation("com.meta.wearable:mwdat-mockdevice:$mwdat_version")
         // Required for ActivityResultRegistry and ComponentActivity (slices 4 and 6).
         implementation("androidx.activity:activity-ktx:1.9.3")
     }

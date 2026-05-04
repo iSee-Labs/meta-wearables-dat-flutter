@@ -71,8 +71,10 @@ class MetaWearablesDatPlugin :
     private lateinit var sessionStateChannel: EventChannel
     private lateinit var sessionErrorChannel: EventChannel
     private lateinit var videoSizeChannel: EventChannel
+    private lateinit var mockDevicesChannel: EventChannel
 
     private var sessionManager: MetaSessionManager? = null
+    private var mockManager: MetaMockDeviceManager? = null
 
     private var activityBinding: ActivityPluginBinding? = null
     private var activity: Activity? = null
@@ -113,6 +115,9 @@ class MetaWearablesDatPlugin :
     private val videoSizeHandler = PassthroughStreamHandler { sink ->
         sessionManager?.setSizeSink(sink)
     }
+    private val mockDevicesHandler = PassthroughStreamHandler { sink ->
+        mockManager?.setMockDevicesSink(sink)
+    }
 
     // --- FlutterPlugin --------------------------------------------------------
 
@@ -150,7 +155,14 @@ class MetaWearablesDatPlugin :
         )
         videoSizeChannel.setStreamHandler(videoSizeHandler)
 
+        mockDevicesChannel = EventChannel(
+            binding.binaryMessenger,
+            "meta_wearables_dat_flutter/mock_devices",
+        )
+        mockDevicesChannel.setStreamHandler(mockDevicesHandler)
+
         sessionManager = MetaSessionManager(binding.textureRegistry)
+        mockManager = MetaMockDeviceManager(binding.applicationContext)
 
         // Force-link Meta's SDK so missing-dependency errors surface here at
         // attach time rather than later when a real method is invoked.
@@ -165,10 +177,12 @@ class MetaWearablesDatPlugin :
         sessionStateChannel.setStreamHandler(null)
         sessionErrorChannel.setStreamHandler(null)
         videoSizeChannel.setStreamHandler(null)
+        mockDevicesChannel.setStreamHandler(null)
         registrationStateHandler.cancel()
         activeDeviceHandler.cancel()
         sessionManager?.dispose()
         sessionManager = null
+        mockManager = null
         pluginScope.cancel()
     }
 
@@ -228,7 +242,65 @@ class MetaWearablesDatPlugin :
             "pauseStreamSession" -> pauseStreamSession(result)
             "resumeStreamSession" -> resumeStreamSession(result)
             "capturePhoto" -> capturePhoto(result)
+            "enableMockDevice" -> mockCall(result) { it.enable() }
+            "disableMockDevice" -> mockCall(result) { it.disable() }
+            "pairMockRayBanMeta" -> mockCallReturning(result) { it.pairRayBanMeta() }
+            "unpairMockDevice" -> mockCall(result) {
+                it.unpair(call.argument<String>("uuid") ?: "")
+            }
+            "mockPowerOn" -> mockCall(result) {
+                it.powerOn(call.argument<String>("uuid") ?: "")
+            }
+            "mockDon" -> mockCall(result) {
+                it.don(call.argument<String>("uuid") ?: "")
+            }
+            "setMockCameraFacing" -> mockCall(result) {
+                it.setCameraFacing(
+                    call.argument<String>("uuid") ?: "",
+                    call.argument<String>("facing") ?: "rear",
+                )
+            }
+            "setMockCameraFeed" -> mockCall(result) {
+                it.setCameraFeed(
+                    call.argument<String>("uuid") ?: "",
+                    call.argument<String>("filePath") ?: "",
+                )
+            }
+            "setMockCapturedImage" -> mockCall(result) {
+                it.setCapturedImage(
+                    call.argument<String>("uuid") ?: "",
+                    call.argument<String>("filePath") ?: "",
+                )
+            }
             else -> result.notImplemented()
+        }
+    }
+
+    private inline fun mockCall(result: Result, block: (MetaMockDeviceManager) -> Unit) {
+        val manager = mockManager ?: run {
+            result.error("MOCK_ERROR", "Mock manager unavailable", null)
+            return
+        }
+        try {
+            block(manager)
+            result.success(null)
+        } catch (e: Exception) {
+            result.error("MOCK_ERROR", e.message ?: e::class.java.simpleName, null)
+        }
+    }
+
+    private inline fun <T> mockCallReturning(
+        result: Result,
+        block: (MetaMockDeviceManager) -> T,
+    ) {
+        val manager = mockManager ?: run {
+            result.error("MOCK_ERROR", "Mock manager unavailable", null)
+            return
+        }
+        try {
+            result.success(block(manager))
+        } catch (e: Exception) {
+            result.error("MOCK_ERROR", e.message ?: e::class.java.simpleName, null)
         }
     }
 

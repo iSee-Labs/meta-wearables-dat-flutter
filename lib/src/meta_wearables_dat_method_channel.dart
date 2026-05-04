@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:meta_wearables_dat_flutter/src/meta_wearables_dat_platform_interface.dart';
+import 'package:meta_wearables_dat_flutter/src/models/camera_facing.dart';
 import 'package:meta_wearables_dat_flutter/src/models/dat_error.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_info.dart';
 import 'package:meta_wearables_dat_flutter/src/models/frame_data.dart';
@@ -392,6 +393,109 @@ class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
     } finally {
       image?.dispose();
       scene?.dispose();
+    }
+  }
+
+  // --- Mock device control --------------------------------------------------
+
+  @override
+  Future<void> enableMockDevice() async {
+    try {
+      await methodChannel.invokeMethod<void>('enableMockDevice');
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> disableMockDevice() async {
+    try {
+      await methodChannel.invokeMethod<void>('disableMockDevice');
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<String> pairMockRayBanMeta() async {
+    try {
+      final uuid =
+          await methodChannel.invokeMethod<String>('pairMockRayBanMeta');
+      return uuid ?? '';
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> unpairMockDevice(String uuid) async {
+    try {
+      await methodChannel.invokeMethod<void>(
+        'unpairMockDevice',
+        <String, Object?>{'uuid': uuid},
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> mockPowerOn(String uuid) async {
+    try {
+      await methodChannel.invokeMethod<void>(
+        'mockPowerOn',
+        <String, Object?>{'uuid': uuid},
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> mockDon(String uuid) async {
+    try {
+      await methodChannel.invokeMethod<void>(
+        'mockDon',
+        <String, Object?>{'uuid': uuid},
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> setMockCameraFacing(String uuid, CameraFacing facing) async {
+    try {
+      await methodChannel.invokeMethod<void>(
+        'setMockCameraFacing',
+        <String, Object?>{'uuid': uuid, 'facing': facing.name},
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> setMockCameraFeed(String uuid, String filePath) async {
+    try {
+      await methodChannel.invokeMethod<void>(
+        'setMockCameraFeed',
+        <String, Object?>{'uuid': uuid, 'filePath': filePath},
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> setMockCapturedImage(String uuid, String filePath) async {
+    try {
+      await methodChannel.invokeMethod<void>(
+        'setMockCapturedImage',
+        <String, Object?>{'uuid': uuid, 'filePath': filePath},
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
     }
   }
 
