@@ -25,6 +25,13 @@ dependencies:
     # the parent directory to use the current plugin's version.
     path: ../
 
+  # Listens for inbound deep links so the example app can forward the Meta
+  # AI registration callback URL to MetaWearablesDat.handleUrl on iOS. On
+  # Android the SDK consumes the deep link via the activity intent-filter,
+  # so handleUrl is a no-op there - app_links is still useful to drive
+  # in-app navigation.
+  app_links: ^6.3.0
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8

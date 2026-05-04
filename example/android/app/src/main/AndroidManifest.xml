@@ -1,8 +1,26 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Required by the Meta Wearables DAT SDK. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:label="meta_wearables_dat_flutter_example"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+
+        <!-- Meta Wearables Device Access Toolkit setup.
+             For Developer Mode the application id can stay "0"; for
+             production replace with the value from the Wearables Developer
+             Center. -->
+        <meta-data
+            android:name="com.meta.wearable.mwdat.APPLICATION_ID"
+            android:value="0" />
+        <meta-data
+            android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
+            android:value="" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -23,6 +41,15 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- Registration callback from the Meta AI app. Meta's Android
+                 SDK consumes this intent automatically; the host activity
+                 just has to declare it (and use launchMode="singleTop"). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="meta_wearables_dat_flutter_example" />
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

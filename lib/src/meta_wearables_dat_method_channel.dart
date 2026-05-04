@@ -83,6 +83,51 @@ class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
     return granted ?? false;
   }
 
+  // --- Registration ---------------------------------------------------------
+
+  @override
+  Future<void> startRegistration({String? appId, String? urlScheme}) async {
+    try {
+      await methodChannel.invokeMethod<void>(
+        'startRegistration',
+        <String, Object?>{
+          if (appId != null) 'appId': appId,
+          if (urlScheme != null) 'urlScheme': urlScheme,
+        },
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<bool> handleUrl(String url) async {
+    try {
+      final consumed = await methodChannel.invokeMethod<bool>(
+        'handleUrl',
+        <String, Object?>{'url': url},
+      );
+      return consumed ?? false;
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> startUnregistration() async {
+    try {
+      await methodChannel.invokeMethod<void>('startUnregistration');
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<RegistrationState> getRegistrationState() async {
+    final raw = await methodChannel.invokeMethod<int>('getRegistrationState');
+    return RegistrationState.fromInt(raw);
+  }
+
   // --- Registration streams -------------------------------------------------
 
   @override
@@ -137,6 +182,32 @@ class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
   }
 
   // --- Helpers --------------------------------------------------------------
+
+  /// Maps a [PlatformException] thrown from the platform channel to the
+  /// most specific [DatError] subclass we have for its `code`. Anything
+  /// unrecognised passes through as a base [DatError].
+  static DatError _mapPlatformException(PlatformException e) {
+    final code = e.code;
+    final message = e.message ?? '';
+    final details = e.details;
+    switch (code) {
+      case DatErrorCodes.registration:
+        return RegistrationError(
+          code: code,
+          message: message,
+          details: details,
+        );
+      case DatErrorCodes.permission:
+      case DatErrorCodes.missingFragmentActivity:
+        return PermissionError(code: code, message: message, details: details);
+      case DatErrorCodes.session:
+        return SessionError(code: code, message: message, details: details);
+      case DatErrorCodes.capture:
+        return CaptureError(code: code, message: message, details: details);
+      case _:
+        return DatError(code: code, message: message, details: details);
+    }
+  }
 
   /// Maps a raw event from the `session_errors` channel to a typed
   /// [DatError] subclass, falling back to a base [DatError] for anything
