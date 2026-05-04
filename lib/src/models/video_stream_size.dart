@@ -28,6 +28,10 @@ class VideoStreamSize {
   /// Pixel height.
   final int height;
 
+  /// Convenience for `width / height`. Returns `0` when `height` is zero
+  /// rather than `NaN`.
+  double get aspectRatio => height == 0 ? 0 : width / height;
+
   @override
   String toString() => 'VideoStreamSize(${width}x$height)';
 }

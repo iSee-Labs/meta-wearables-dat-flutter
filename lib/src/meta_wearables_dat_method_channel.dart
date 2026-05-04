@@ -5,6 +5,7 @@ import 'package:meta_wearables_dat_flutter/src/models/dat_error.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_info.dart';
 import 'package:meta_wearables_dat_flutter/src/models/registration_state.dart';
 import 'package:meta_wearables_dat_flutter/src/models/session_state.dart';
+import 'package:meta_wearables_dat_flutter/src/models/stream_quality.dart';
 import 'package:meta_wearables_dat_flutter/src/models/video_stream_size.dart';
 
 /// Default [MetaWearablesDatPlatform] implementation that forwards every call
@@ -168,6 +169,77 @@ class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
       if (event == null) return null;
       return DeviceInfo.fromMap(event as Map<Object?, Object?>);
     });
+  }
+
+  // --- Streaming ------------------------------------------------------------
+
+  @override
+  Future<int> startStreamSession({
+    String? deviceUUID,
+    int fps = 30,
+    StreamQuality quality = StreamQuality.medium,
+  }) async {
+    try {
+      final id = await methodChannel.invokeMethod<int>(
+        'startStreamSession',
+        <String, Object?>{
+          if (deviceUUID != null) 'deviceUuid': deviceUUID,
+          'fps': fps,
+          'quality': quality.name,
+        },
+      );
+      if (id == null) {
+        throw const SessionError(
+          code: DatErrorCodes.session,
+          message: 'startStreamSession returned null',
+        );
+      }
+      return id;
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> stopStreamSession({String? deviceUUID}) async {
+    try {
+      await methodChannel.invokeMethod<void>(
+        'stopStreamSession',
+        <String, Object?>{
+          if (deviceUUID != null) 'deviceUuid': deviceUUID,
+        },
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> pauseStreamSession({String? deviceUUID}) async {
+    try {
+      await methodChannel.invokeMethod<void>(
+        'pauseStreamSession',
+        <String, Object?>{
+          if (deviceUUID != null) 'deviceUuid': deviceUUID,
+        },
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> resumeStreamSession({String? deviceUUID}) async {
+    try {
+      await methodChannel.invokeMethod<void>(
+        'resumeStreamSession',
+        <String, Object?>{
+          if (deviceUUID != null) 'deviceUuid': deviceUUID,
+        },
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
   }
 
   // --- Streaming streams ----------------------------------------------------

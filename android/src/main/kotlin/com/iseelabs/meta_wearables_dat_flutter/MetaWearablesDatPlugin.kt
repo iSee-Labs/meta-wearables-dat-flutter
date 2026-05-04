@@ -7,6 +7,10 @@
 //          `registration_state` and `active_device` EventChannels driven by
 //          `Wearables.registrationState` and
 //          `AutoDeviceSelector().activeDeviceFlow()`.
+// Slice 7: streaming. Adds `startStreamSession`, `stopStreamSession`,
+//          `pauseStreamSession`, `resumeStreamSession`, plus three
+//          EventChannels (session_state, session_errors, video_stream_size).
+//          Frame plumbing lives in MetaSessionManager.
 //
 // Meta's `Wearables.initialize(activity)` is called exactly once, only
 // after `BLUETOOTH_CONNECT` is granted - calling it earlier silently breaks
@@ -24,6 +28,7 @@ import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.core.app.ActivityCompat
+import com.meta.wearable.dat.camera.VideoQuality
 import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
 import com.meta.wearable.dat.core.types.DeviceIdentifier
@@ -63,6 +68,11 @@ class MetaWearablesDatPlugin :
     private lateinit var channel: MethodChannel
     private lateinit var registrationStateChannel: EventChannel
     private lateinit var activeDeviceChannel: EventChannel
+    private lateinit var sessionStateChannel: EventChannel
+    private lateinit var sessionErrorChannel: EventChannel
+    private lateinit var videoSizeChannel: EventChannel
+
+    private var sessionManager: MetaSessionManager? = null
 
     private var activityBinding: ActivityPluginBinding? = null
     private var activity: Activity? = null
@@ -94,6 +104,15 @@ class MetaWearablesDatPlugin :
 
     private val registrationStateHandler = RegistrationStateStreamHandler()
     private val activeDeviceHandler = ActiveDeviceStreamHandler()
+    private val sessionStateHandler = PassthroughStreamHandler { sink ->
+        sessionManager?.setStateSink(sink)
+    }
+    private val sessionErrorHandler = PassthroughStreamHandler { sink ->
+        sessionManager?.setErrorSink(sink)
+    }
+    private val videoSizeHandler = PassthroughStreamHandler { sink ->
+        sessionManager?.setSizeSink(sink)
+    }
 
     // --- FlutterPlugin --------------------------------------------------------
 
@@ -113,6 +132,26 @@ class MetaWearablesDatPlugin :
         )
         activeDeviceChannel.setStreamHandler(activeDeviceHandler)
 
+        sessionStateChannel = EventChannel(
+            binding.binaryMessenger,
+            "meta_wearables_dat_flutter/session_state",
+        )
+        sessionStateChannel.setStreamHandler(sessionStateHandler)
+
+        sessionErrorChannel = EventChannel(
+            binding.binaryMessenger,
+            "meta_wearables_dat_flutter/session_errors",
+        )
+        sessionErrorChannel.setStreamHandler(sessionErrorHandler)
+
+        videoSizeChannel = EventChannel(
+            binding.binaryMessenger,
+            "meta_wearables_dat_flutter/video_stream_size",
+        )
+        videoSizeChannel.setStreamHandler(videoSizeHandler)
+
+        sessionManager = MetaSessionManager(binding.textureRegistry)
+
         // Force-link Meta's SDK so missing-dependency errors surface here at
         // attach time rather than later when a real method is invoked.
         @Suppress("UNUSED_VARIABLE")
@@ -123,8 +162,13 @@ class MetaWearablesDatPlugin :
         channel.setMethodCallHandler(null)
         registrationStateChannel.setStreamHandler(null)
         activeDeviceChannel.setStreamHandler(null)
+        sessionStateChannel.setStreamHandler(null)
+        sessionErrorChannel.setStreamHandler(null)
+        videoSizeChannel.setStreamHandler(null)
         registrationStateHandler.cancel()
         activeDeviceHandler.cancel()
+        sessionManager?.dispose()
+        sessionManager = null
         pluginScope.cancel()
     }
 
@@ -179,8 +223,64 @@ class MetaWearablesDatPlugin :
             "getRegistrationState" -> getRegistrationState(result)
             "requestCameraPermission" -> requestCameraPermission(result)
             "getCameraPermissionStatus" -> getCameraPermissionStatus(result)
+            "startStreamSession" -> startStreamSession(call, result)
+            "stopStreamSession" -> stopStreamSession(result)
+            "pauseStreamSession" -> pauseStreamSession(result)
+            "resumeStreamSession" -> resumeStreamSession(result)
             else -> result.notImplemented()
         }
+    }
+
+    // --- Streaming flow -------------------------------------------------------
+
+    private fun startStreamSession(call: MethodCall, result: Result) {
+        val manager = sessionManager
+        if (manager == null) {
+            result.error(
+                "SESSION_ERROR",
+                "Plugin not attached to engine.",
+                null,
+            )
+            return
+        }
+        val deviceUuid = call.argument<String>("deviceUuid")
+        val fps = call.argument<Int>("fps") ?: 30
+        val qualityRaw = call.argument<String>("quality") ?: "high"
+        val quality = when (qualityRaw) {
+            "low" -> VideoQuality.Low
+            "medium" -> VideoQuality.Medium
+            else -> VideoQuality.High
+        }
+        pluginScope.launch {
+            try {
+                val id = manager.startSession(deviceUuid, fps, quality)
+                result.success(id)
+            } catch (e: Exception) {
+                result.error(
+                    "SESSION_ERROR",
+                    e.message ?: e::class.java.simpleName,
+                    null,
+                )
+            }
+        }
+    }
+
+    private fun stopStreamSession(result: Result) {
+        val manager = sessionManager ?: run { result.success(null); return }
+        pluginScope.launch {
+            manager.stopSession()
+            result.success(null)
+        }
+    }
+
+    private fun pauseStreamSession(result: Result) {
+        sessionManager?.pauseSession()
+        result.success(null)
+    }
+
+    private fun resumeStreamSession(result: Result) {
+        sessionManager?.resumeSession()
+        result.success(null)
     }
 
     // --- Permission flow ------------------------------------------------------
@@ -476,5 +576,22 @@ class MetaWearablesDatPlugin :
             "name" to id,
             "kind" to "unknown",
         )
+    }
+}
+
+/**
+ * Tiny [EventChannel.StreamHandler] that simply hands its EventSink off to a
+ * callback - lets the [MetaSessionManager] decide when to emit values
+ * rather than baking that logic into the channel handler itself.
+ */
+internal class PassthroughStreamHandler(
+    private val onSinkChange: (EventChannel.EventSink?) -> Unit,
+) : EventChannel.StreamHandler {
+    override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+        onSinkChange(events)
+    }
+
+    override fun onCancel(arguments: Any?) {
+        onSinkChange(null)
     }
 }

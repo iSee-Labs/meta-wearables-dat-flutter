@@ -24,9 +24,16 @@ class _MyAppState extends State<MyApp> {
   RegistrationState _registrationState = RegistrationState.unavailable;
   DeviceInfo? _activeDevice;
 
+  int? _textureId;
+  SessionState _sessionState = SessionState.stopped;
+  VideoStreamSize? _videoSize;
+
   StreamSubscription<RegistrationState>? _registrationSub;
   StreamSubscription<DeviceInfo?>? _activeDeviceSub;
   StreamSubscription<Uri>? _deepLinkSub;
+  StreamSubscription<SessionState>? _sessionStateSub;
+  StreamSubscription<Object>? _sessionErrorSub;
+  StreamSubscription<VideoStreamSize>? _videoSizeSub;
 
   final AppLinks _appLinks = AppLinks();
 
@@ -36,6 +43,7 @@ class _MyAppState extends State<MyApp> {
     initPlatformState();
     _wireRegistrationStreams();
     _wireDeepLinks();
+    _wireSessionStreams();
   }
 
   @override
@@ -43,6 +51,9 @@ class _MyAppState extends State<MyApp> {
     _registrationSub?.cancel();
     _activeDeviceSub?.cancel();
     _deepLinkSub?.cancel();
+    _sessionStateSub?.cancel();
+    _sessionErrorSub?.cancel();
+    _videoSizeSub?.cancel();
     super.dispose();
   }
 
@@ -146,6 +157,57 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
+  void _wireSessionStreams() {
+    _sessionStateSub = MetaWearablesDat.sessionStateStream().listen(
+      (state) {
+        if (!mounted) return;
+        setState(() => _sessionState = state);
+      },
+      onError: (Object e) {
+        if (!mounted) return;
+        setState(() => _lastError = 'sessionStateStream: $e');
+      },
+    );
+    _sessionErrorSub = MetaWearablesDat.sessionErrorStream().listen(
+      (err) {
+        if (!mounted) return;
+        setState(() => _lastError = 'session: $err');
+      },
+    );
+    _videoSizeSub = MetaWearablesDat.videoStreamSizeStream().listen(
+      (size) {
+        if (!mounted) return;
+        setState(() => _videoSize = size);
+      },
+    );
+  }
+
+  Future<void> _startStreaming() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final id = await MetaWearablesDat.startStreamSession();
+      if (!mounted) return;
+      setState(() => _textureId = id);
+      messenger.showSnackBar(
+        SnackBar(content: Text('Streaming on texture $id')),
+      );
+    } on DatError catch (e) {
+      if (!mounted) return;
+      setState(() => _lastError = '${e.code}: ${e.message}');
+    }
+  }
+
+  Future<void> _stopStreaming() async {
+    try {
+      await MetaWearablesDat.stopStreamSession();
+      if (!mounted) return;
+      setState(() => _textureId = null);
+    } on DatError catch (e) {
+      if (!mounted) return;
+      setState(() => _lastError = '${e.code}: ${e.message}');
+    }
+  }
+
   Future<void> _requestCameraPermission() async {
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -220,6 +282,40 @@ class _MyAppState extends State<MyApp> {
                           : null,
                   child: const Text('Request camera permission'),
                 ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: _textureId == null &&
+                                _registrationState == RegistrationState.registered
+                            ? _startStreaming
+                            : null,
+                        child: const Text('Start streaming'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _textureId == null ? null : _stopStreaming,
+                        child: const Text('Stop'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text('Session: ${_sessionState.name}'
+                    '${_videoSize != null ? '  ${_videoSize!.width}x${_videoSize!.height}' : ''}'),
+                if (_textureId != null) ...[
+                  const SizedBox(height: 12),
+                  AspectRatio(
+                    aspectRatio: _videoSize?.aspectRatio ?? 9 / 16,
+                    child: Container(
+                      color: Colors.black,
+                      child: Texture(textureId: _textureId!),
+                    ),
+                  ),
+                ],
                 if (_lastError != null) ...[
                   const SizedBox(height: 16),
                   Text(

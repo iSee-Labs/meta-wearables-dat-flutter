@@ -7,6 +7,10 @@
 //          `registration_state` and `active_device` EventChannels driven by
 //          `Wearables.shared.registrationStateStream()` and
 //          `AutoDeviceSelector`.
+// Slice 7: streaming - `startStreamSession`, `stopStreamSession`,
+//          `pauseStreamSession`, `resumeStreamSession`, plus the
+//          `session_state`, `session_errors`, `video_stream_size`
+//          EventChannels and a `FlutterTexture`-backed CVPixelBuffer pump.
 
 import Flutter
 import UIKit
@@ -33,6 +37,14 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
   // tokens survive past `register(with:)`.
   private let registrationStateHandler = RegistrationStateStreamHandler()
   private let activeDeviceHandler = ActiveDeviceStreamHandler()
+
+  // Streaming. Manager is created lazily on first session start because we
+  // need the texture registry from the registrar.
+  private var sessionManager: MetaSessionManager?
+  private let sessionStateHandler = PassthroughStreamHandler()
+  private let sessionErrorHandler = PassthroughStreamHandler()
+  private let videoSizeHandler = PassthroughStreamHandler()
+  private weak var pluginRegistrar: FlutterPluginRegistrar?
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     if !didConfigure {
@@ -62,10 +74,53 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
       binaryMessenger: registrar.messenger()
     )
 
+    let sessionStateChannel = FlutterEventChannel(
+      name: "meta_wearables_dat_flutter/session_state",
+      binaryMessenger: registrar.messenger()
+    )
+    let sessionErrorChannel = FlutterEventChannel(
+      name: "meta_wearables_dat_flutter/session_errors",
+      binaryMessenger: registrar.messenger()
+    )
+    let videoSizeChannel = FlutterEventChannel(
+      name: "meta_wearables_dat_flutter/video_stream_size",
+      binaryMessenger: registrar.messenger()
+    )
+
     let instance = MetaWearablesDatPlugin()
+    instance.pluginRegistrar = registrar
     registrar.addMethodCallDelegate(instance, channel: methodChannel)
     registrationStateChannel.setStreamHandler(instance.registrationStateHandler)
     activeDeviceChannel.setStreamHandler(instance.activeDeviceHandler)
+    sessionStateChannel.setStreamHandler(instance.sessionStateHandler)
+    sessionErrorChannel.setStreamHandler(instance.sessionErrorHandler)
+    videoSizeChannel.setStreamHandler(instance.videoSizeHandler)
+  }
+
+  /// Lazily builds the session manager on first use and wires its EventSinks
+  /// to the matching stream handlers.
+  @MainActor
+  private func ensureSessionManager() throws -> MetaSessionManager {
+    if let manager = sessionManager { return manager }
+    guard let registrar = pluginRegistrar else {
+      throw NSError(
+        domain: "meta_wearables_dat_flutter",
+        code: -10,
+        userInfo: [NSLocalizedDescriptionKey: "Plugin registrar is gone"]
+      )
+    }
+    let manager = MetaSessionManager(registry: registrar.textures())
+    sessionStateHandler.onSinkChange = { [weak manager] sink in
+      manager?.setSessionStateSink(sink)
+    }
+    sessionErrorHandler.onSinkChange = { [weak manager] sink in
+      manager?.setSessionErrorSink(sink)
+    }
+    videoSizeHandler.onSinkChange = { [weak manager] sink in
+      manager?.setVideoSizeSink(sink)
+    }
+    sessionManager = manager
+    return manager
   }
 
   public func handle(
@@ -197,9 +252,82 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
         }
       }
 
+    case "startStreamSession":
+      let args = call.arguments as? [String: Any?]
+      let deviceUUID = args?["deviceUuid"] as? String
+      let fps = (args?["fps"] as? Int) ?? 30
+      let qualityRaw = (args?["quality"] as? String) ?? "high"
+      let quality: StreamingResolution = {
+        switch qualityRaw {
+        case "low": return .low
+        case "medium": return .medium
+        default: return .high
+        }
+      }()
+      Task { @MainActor in
+        do {
+          let manager = try ensureSessionManager()
+          let id = try await manager.startSession(
+            deviceUUID: deviceUUID,
+            fps: fps,
+            quality: quality
+          )
+          result(id)
+        } catch {
+          result(FlutterError(
+            code: "SESSION_ERROR",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      }
+
+    case "stopStreamSession":
+      Task { @MainActor in
+        await sessionManager?.stopSession()
+        result(nil)
+      }
+
+    case "pauseStreamSession":
+      Task { @MainActor in
+        await sessionManager?.pauseSession()
+        result(nil)
+      }
+
+    case "resumeStreamSession":
+      Task { @MainActor in
+        await sessionManager?.resumeSession()
+        result(nil)
+      }
+
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+}
+
+// MARK: - Passthrough stream handler
+
+/// Tiny `FlutterStreamHandler` that simply hands its EventSink to a callback.
+/// Used by the streaming pipeline so the session manager - rather than this
+/// handler - owns when to emit values.
+private final class PassthroughStreamHandler: NSObject, FlutterStreamHandler {
+  var onSinkChange: ((FlutterEventSink?) -> Void)?
+  private var sink: FlutterEventSink?
+
+  func onListen(
+    withArguments arguments: Any?,
+    eventSink events: @escaping FlutterEventSink
+  ) -> FlutterError? {
+    sink = events
+    onSinkChange?(events)
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    sink = nil
+    onSinkChange?(nil)
+    return nil
   }
 }
 

@@ -43,3 +43,4 @@ android/local.properties
 # See `CURSOR.md` for context. Excluded from `dart pub publish` via
 # `.pubignore` (slice 13) and from analysis via `analysis_options.yaml`.
 /meta-glasses-research/
+.vscode/
