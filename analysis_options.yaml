@@ -6,6 +6,10 @@ analyzer:
     # community plugin) used purely as design reference. Not part of this
     # plugin's source. See `CURSOR.md` for context.
     - meta-glasses-research/**
+    # Each sample is its own Flutter project with its own pubspec /
+    # analysis_options. They are linted independently via
+    # `cd samples/camera_access && flutter analyze`.
+    - samples/**
 
 # Project-specific overrides for the v0.1.0 development cut.
 # Slice 12 (docs) re-enables `public_member_api_docs` after every public API
@@ -13,8 +17,8 @@ analyzer:
 # this codebase.
 linter:
   rules:
-    # Re-enabled in slice 12 once dartdoc is filled in everywhere.
-    public_member_api_docs: false
+    # Slice 12: every public API now has dartdoc. Re-enabled.
+    public_member_api_docs: true
     # Models reference facade symbols (e.g. `[MetaWearablesDat.startStream]`)
     # for navigability in published dartdoc. Importing the facade in every
     # model file would create a cycle (the facade also exports them), and
