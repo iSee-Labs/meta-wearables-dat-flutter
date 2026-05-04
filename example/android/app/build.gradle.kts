@@ -24,7 +24,8 @@ android {
         applicationId = "com.example.meta_wearables_dat_flutter_example"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // meta_wearables_dat_flutter requires API 31 (matches Meta's reference samples).
+        minSdk = 31
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+        Permissions are intentionally NOT declared here. Consumers add them in
+        the host app's manifest because not every consumer needs every
+        permission (e.g. an app shipping mock-only does not need BLUETOOTH).
+        See `doc/getting_started.md` for the required entries.
+    -->
+</manifest>
