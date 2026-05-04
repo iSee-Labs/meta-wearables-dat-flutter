@@ -41,6 +41,12 @@ final class MetaSessionManager: NSObject {
   private var stateToken: AnyListenerToken?
   private var errorToken: AnyListenerToken?
   private var frameToken: AnyListenerToken?
+  private var photoToken: AnyListenerToken?
+
+  /// Continuation for an in-flight `capturePhoto`. Resumed when the next
+  /// `PhotoData` arrives on the publisher. `nil` when no capture is in
+  /// progress; only one capture can be outstanding at a time.
+  private var pendingPhotoContinuation: CheckedContinuation<PhotoData, Error>?
 
   // EventSinks (set by the plugin when Dart subscribes).
   fileprivate var sessionStateSink: FlutterEventSink?
@@ -126,9 +132,57 @@ final class MetaSessionManager: NSObject {
     frameToken = stream.videoFramePublisher.listen { [weak self] frame in
       self?.handleVideoFrame(frame, textureId: id)
     }
+    photoToken = stream.photoDataPublisher.listen { [weak self] photo in
+      Task { @MainActor in
+        self?.deliverPhoto(.success(photo))
+      }
+    }
 
     await stream.start()
     return id
+  }
+
+  /// Triggers a high-res still capture and resolves once the next
+  /// `PhotoData` arrives on the publisher. Throws when no session is
+  /// active, when another capture is already in flight, or when the
+  /// underlying SDK returns `false` from `capturePhoto`.
+  func capturePhoto(format: PhotoCaptureFormat) async throws -> PhotoData {
+    guard let stream = session else {
+      throw NSError(
+        domain: "meta_wearables_dat_flutter",
+        code: -20,
+        userInfo: [NSLocalizedDescriptionKey: "No active stream session"],
+      )
+    }
+    if pendingPhotoContinuation != nil {
+      throw NSError(
+        domain: "meta_wearables_dat_flutter",
+        code: -21,
+        userInfo: [
+          NSLocalizedDescriptionKey: "A photo capture is already in flight",
+        ],
+      )
+    }
+    return try await withCheckedThrowingContinuation { continuation in
+      pendingPhotoContinuation = continuation
+      let kickedOff = stream.capturePhoto(format: format)
+      if !kickedOff {
+        pendingPhotoContinuation = nil
+        continuation.resume(throwing: NSError(
+          domain: "meta_wearables_dat_flutter",
+          code: -22,
+          userInfo: [
+            NSLocalizedDescriptionKey: "capturePhoto returned false",
+          ],
+        ))
+      }
+    }
+  }
+
+  private func deliverPhoto(_ result: Result<PhotoData, Error>) {
+    guard let continuation = pendingPhotoContinuation else { return }
+    pendingPhotoContinuation = nil
+    continuation.resume(with: result)
   }
 
   func stopSession() async {
@@ -138,10 +192,20 @@ final class MetaSessionManager: NSObject {
     stateToken?.cancel()
     errorToken?.cancel()
     frameToken?.cancel()
+    photoToken?.cancel()
     stateToken = nil
     errorToken = nil
     frameToken = nil
+    photoToken = nil
     session = nil
+
+    if pendingPhotoContinuation != nil {
+      deliverPhoto(.failure(NSError(
+        domain: "meta_wearables_dat_flutter",
+        code: -23,
+        userInfo: [NSLocalizedDescriptionKey: "Session stopped during capture"],
+      )))
+    }
 
     if let id = textureId {
       registry?.unregisterTexture(id)

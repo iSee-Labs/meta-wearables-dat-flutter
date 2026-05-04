@@ -6,6 +6,7 @@ import 'package:meta_wearables_dat_flutter/src/meta_wearables_dat_platform_inter
 import 'package:meta_wearables_dat_flutter/src/models/dat_error.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_info.dart';
 import 'package:meta_wearables_dat_flutter/src/models/frame_data.dart';
+import 'package:meta_wearables_dat_flutter/src/models/photo_result.dart';
 import 'package:meta_wearables_dat_flutter/src/models/registration_state.dart';
 import 'package:meta_wearables_dat_flutter/src/models/session_state.dart';
 import 'package:meta_wearables_dat_flutter/src/models/stream_quality.dart';
@@ -277,6 +278,41 @@ class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
       _lastVideoStreamSize = size;
       return size;
     });
+  }
+
+  // --- Photo capture --------------------------------------------------------
+
+  @override
+  Future<PhotoResult> capturePhoto({
+    String? deviceUUID,
+    PhotoFormat format = PhotoFormat.jpeg,
+  }) async {
+    try {
+      final result = await methodChannel
+          .invokeMethod<Map<Object?, Object?>>('capturePhoto', <String, Object?>{
+        if (deviceUUID != null) 'deviceUuid': deviceUUID,
+        'format': format.name,
+      });
+      if (result == null) {
+        throw const CaptureError(
+          code: DatErrorCodes.capture,
+          message: 'capturePhoto returned null',
+        );
+      }
+      final bytes = result['bytes'];
+      final formatName = result['format'] as String? ?? format.name;
+      final byteList = switch (bytes) {
+        final Uint8List u => u,
+        final List<int> l => Uint8List.fromList(l),
+        _ => Uint8List(0),
+      };
+      return PhotoResult(
+        bytes: byteList,
+        format: formatName == 'heic' ? PhotoFormat.heic : PhotoFormat.jpeg,
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
   }
 
   // --- Frame capture --------------------------------------------------------

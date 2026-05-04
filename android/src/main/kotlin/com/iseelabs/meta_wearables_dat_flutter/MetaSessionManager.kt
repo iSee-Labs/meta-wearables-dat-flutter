@@ -32,6 +32,8 @@ import com.meta.wearable.dat.camera.StreamSessionState
 import com.meta.wearable.dat.camera.VideoFrame
 import com.meta.wearable.dat.camera.VideoQuality
 import com.meta.wearable.dat.camera.addStream
+import com.meta.wearable.dat.camera.types.PhotoData
+import java.io.ByteArrayOutputStream
 import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
 import com.meta.wearable.dat.core.selectors.SpecificDeviceSelector
@@ -160,6 +162,36 @@ internal class MetaSessionManager(
         argbBitmap = null
         lastWidth = 0
         lastHeight = 0
+    }
+
+    /**
+     * Captures a still photo mid-stream and returns it as a (bytes, format)
+     * pair. The format is determined by the device side: HEIC frames are
+     * passed through unchanged; Bitmap frames are encoded to JPEG at
+     * quality 95 (a good balance for OCR and ML pipelines).
+     */
+    suspend fun capturePhoto(): Pair<ByteArray, String> {
+        val stream = stream ?: error("No active stream session")
+        val outcome = stream.capturePhoto()
+        // Meta's `Result` exposes onSuccess / onFailure rather than
+        // kotlin.Result.fold; we read it via getOrThrow() if available, else
+        // unwrap onSuccess into a CompletableDeferred-like flow. The
+        // simplest portable route is the `getOrNull` accessor.
+        val photo = outcome.getOrNull()
+            ?: error("capturePhoto failed: ${outcome.exceptionOrNull()?.message}")
+        return when (photo) {
+            is PhotoData.Bitmap -> {
+                val bos = ByteArrayOutputStream()
+                photo.bitmap.compress(Bitmap.CompressFormat.JPEG, 95, bos)
+                bos.toByteArray() to "jpeg"
+            }
+            is PhotoData.HEIC -> {
+                val buffer = photo.data.duplicate().apply { position(0) }
+                val bytes = ByteArray(buffer.remaining())
+                buffer.get(bytes)
+                bytes to "heic"
+            }
+        }
     }
 
     fun pauseSession() {

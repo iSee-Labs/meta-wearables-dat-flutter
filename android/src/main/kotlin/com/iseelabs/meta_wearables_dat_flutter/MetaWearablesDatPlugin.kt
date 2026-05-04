@@ -227,7 +227,32 @@ class MetaWearablesDatPlugin :
             "stopStreamSession" -> stopStreamSession(result)
             "pauseStreamSession" -> pauseStreamSession(result)
             "resumeStreamSession" -> resumeStreamSession(result)
+            "capturePhoto" -> capturePhoto(result)
             else -> result.notImplemented()
+        }
+    }
+
+    private fun capturePhoto(result: Result) {
+        val manager = sessionManager
+        if (manager == null) {
+            result.error(
+                "CAPTURE_ERROR",
+                "Plugin not attached to engine.",
+                null,
+            )
+            return
+        }
+        pluginScope.launch {
+            try {
+                val (bytes, format) = manager.capturePhoto()
+                result.success(mapOf("bytes" to bytes, "format" to format))
+            } catch (e: Exception) {
+                result.error(
+                    "CAPTURE_ERROR",
+                    e.message ?: e::class.java.simpleName,
+                    null,
+                )
+            }
         }
     }
 

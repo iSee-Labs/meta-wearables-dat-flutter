@@ -300,6 +300,37 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
         result(nil)
       }
 
+    case "capturePhoto":
+      let args = call.arguments as? [String: Any?]
+      let formatRaw = (args?["format"] as? String) ?? "jpeg"
+      let format: PhotoCaptureFormat = (formatRaw == "heic") ? .heic : .jpeg
+      Task { @MainActor in
+        do {
+          guard let manager = sessionManager else {
+            throw NSError(
+              domain: "meta_wearables_dat_flutter",
+              code: -30,
+              userInfo: [
+                NSLocalizedDescriptionKey:
+                  "No stream session - call startStreamSession first",
+              ],
+            )
+          }
+          let photo = try await manager.capturePhoto(format: format)
+          let outFormat = (photo.format == .heic) ? "heic" : "jpeg"
+          result([
+            "bytes": FlutterStandardTypedData(bytes: photo.data),
+            "format": outFormat,
+          ] as [String: Any])
+        } catch {
+          result(FlutterError(
+            code: "CAPTURE_ERROR",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      }
+
     default:
       result(FlutterMethodNotImplemented)
     }
