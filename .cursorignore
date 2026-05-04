@@ -1,0 +1,6 @@
+build/
+.dart_tool/
+ios/Pods/
+android/.gradle/
+**/*.lock
+references/
