@@ -1,8 +1,11 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:meta_wearables_dat_flutter/src/meta_wearables_dat_platform_interface.dart';
 import 'package:meta_wearables_dat_flutter/src/models/dat_error.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_info.dart';
+import 'package:meta_wearables_dat_flutter/src/models/frame_data.dart';
 import 'package:meta_wearables_dat_flutter/src/models/registration_state.dart';
 import 'package:meta_wearables_dat_flutter/src/models/session_state.dart';
 import 'package:meta_wearables_dat_flutter/src/models/stream_quality.dart';
@@ -66,6 +69,14 @@ class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
   Stream<Object>? _sessionErrorStream;
   Stream<VideoStreamSize>? _videoStreamSizeStream;
   Stream<List<DeviceInfo>>? _mockDevicesStream;
+
+  /// Latest [VideoStreamSize] observed on the `video_stream_size` channel.
+  /// Used as the canvas size for [captureStreamFrame] when the caller does
+  /// not pass an explicit size. Updated by the [videoStreamSizeStream]
+  /// getter so frames captured before any host listener attaches still
+  /// pick up the right dimensions (the broadcast stream replays the
+  /// initial event to every late subscriber).
+  VideoStreamSize? _lastVideoStreamSize;
 
   // --- Diagnostics ----------------------------------------------------------
 
@@ -261,7 +272,91 @@ class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
   Stream<VideoStreamSize> videoStreamSizeStream() {
     return _videoStreamSizeStream ??= videoStreamSizeChannel
         .receiveBroadcastStream()
-        .map((event) => VideoStreamSize.fromMap(event as Map<Object?, Object?>));
+        .map((event) => VideoStreamSize.fromMap(event as Map<Object?, Object?>))
+        .map((size) {
+      _lastVideoStreamSize = size;
+      return size;
+    });
+  }
+
+  // --- Frame capture --------------------------------------------------------
+
+  /// Pure-Dart on-demand snapshot of the live stream Texture.
+  ///
+  /// Implementation details:
+  ///
+  /// 1. Builds a [ui.Scene] containing nothing but a single texture layer
+  ///    pointing at [textureId] via [ui.SceneBuilder.addTexture].
+  /// 2. Rasterises the scene to a [ui.Image] at the most recently observed
+  ///    [VideoStreamSize] (defaulting to 1280x720 if none has been emitted
+  ///    yet).
+  /// 3. Encodes the image with [ui.Image.toByteData] using the byte format
+  ///    matching [FrameFormat].
+  ///
+  /// This is intentionally on the slow path - allocating an [ui.Image]
+  /// per call - because the API is meant for "give me the current frame"
+  /// queries (OCR, ML inference, screenshot), not 30fps consumption.
+  /// Hosts that need every frame should subscribe to a dedicated
+  /// `videoFramesStream()` (planned for v0.2).
+  ///
+  /// Notifies of a missing texture by returning `null`. Throws a
+  /// [CaptureError] if the rasterisation or encoding step fails.
+  @override
+  Future<FrameData?> captureStreamFrame(
+    int textureId, {
+    FrameFormat format = FrameFormat.rawRgba,
+  }) async {
+    final size = _lastVideoStreamSize ??
+        const VideoStreamSize(width: 1280, height: 720);
+    final width = size.width;
+    final height = size.height;
+    if (width <= 0 || height <= 0) return null;
+
+    ui.Scene? scene;
+    ui.Image? image;
+    try {
+      final builder = ui.SceneBuilder()
+        ..pushOffset(0, 0)
+        ..addTexture(
+          textureId,
+          width: width.toDouble(),
+          height: height.toDouble(),
+        )
+        ..pop();
+      scene = builder.build();
+      image = await scene.toImage(width, height);
+
+      final byteFormat = switch (format) {
+        FrameFormat.png => ui.ImageByteFormat.png,
+        FrameFormat.rawStraightRgba => ui.ImageByteFormat.rawStraightRgba,
+        FrameFormat.rawRgba => ui.ImageByteFormat.rawRgba,
+      };
+      final byteData = await image.toByteData(format: byteFormat);
+      if (byteData == null) {
+        throw const CaptureError(
+          code: DatErrorCodes.capture,
+          message: 'ui.Image.toByteData returned null',
+        );
+      }
+      return FrameData(
+        bytes: byteData.buffer.asUint8List(
+          byteData.offsetInBytes,
+          byteData.lengthInBytes,
+        ),
+        width: width,
+        height: height,
+        format: format,
+      );
+    } catch (e) {
+      if (e is DatError) rethrow;
+      throw CaptureError(
+        code: DatErrorCodes.capture,
+        message: 'captureStreamFrame failed: $e',
+      );
+    } finally {
+      image?.dispose();
+      scene?.dispose();
+    }
   }
 
   // --- Mock devices stream --------------------------------------------------
