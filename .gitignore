@@ -1,0 +1,51 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# FVM (Flutter Version Management) per-project SDK symlink.
+.fvm/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+# Libraries should not include pubspec.lock, per https://dart.dev/guides/libraries/private-files#pubspeclock.
+/pubspec.lock
+**/doc/api/
+.dart_tool/
+.flutter-plugins-dependencies
+.flutter-plugins
+.metadata
+/build/
+/coverage/
+
+# Gradle build cache (created when the Android plugin module is probed by
+# `flutter pub get` or built locally).
+.gradle/
+android/.gradle/
+android/local.properties
+
+# Vendored research material (Meta's official samples + the rodcone community
+# plugin) cloned for design reference only; not part of this plugin's source.
+# See `CURSOR.md` for context. Excluded from `dart pub publish` via
+# `.pubignore` (slice 13) and from analysis via `analysis_options.yaml`.
+/meta-glasses-research/
+.vscode/

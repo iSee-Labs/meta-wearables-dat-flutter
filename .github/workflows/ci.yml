@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-and-test:
+    name: Analyze + test (Dart)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.x
+          channel: stable
+          cache: true
+
+      - name: pub get (plugin)
+        run: flutter pub get
+
+      - name: pub get (example)
+        run: flutter pub get
+        working-directory: example
+
+      - name: pub get (samples/camera_access)
+        run: flutter pub get
+        working-directory: samples/camera_access
+
+      - name: Format check
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Analyze (plugin)
+        run: flutter analyze --fatal-infos --fatal-warnings
+
+      - name: Analyze (example)
+        run: flutter analyze --fatal-infos --fatal-warnings
+        working-directory: example
+
+      - name: Analyze (samples/camera_access)
+        run: flutter analyze --fatal-infos --fatal-warnings
+        working-directory: samples/camera_access
+
+      - name: Test (plugin)
+        run: flutter test --no-pub --reporter compact
+
+      - name: Pub publish dry-run
+        run: flutter pub publish --dry-run
+
+  build-ios:
+    name: Build iOS (example)
+    # macos-15 ships Xcode 16, required because Meta's
+    # `meta-wearables-dat-ios` 0.6.0 Package.swift declares
+    # `// swift-tools-version: 6.0`.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          # Select the latest Xcode 16.x available on the runner.
+          # Using a hardcoded path (Xcode_16.app) is fragile because
+          # GitHub names the app by full version (e.g. Xcode_16.2.app).
+          xcode-version: ^16.0
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.x
+          channel: stable
+          cache: true
+
+      - name: Enable Swift Package Manager
+        run: flutter config --enable-swift-package-manager
+
+      - name: pub get (example)
+        run: flutter pub get
+        working-directory: example
+
+      - name: Build iOS (simulator)
+        # Build for simulator to avoid needing the iOS device platform
+        # to be pre-installed on the runner. The Swift compilation is
+        # identical; only the target arch differs.
+        run: flutter build ios --debug --simulator
+        working-directory: example
+
+  build-android:
+    name: Build Android (example)
+    runs-on: ubuntu-latest
+    # Opt-in: Meta publishes the Android SDK on GitHub Packages under the
+    # `facebook` org. Even read access requires a personal access token with
+    # the `read:packages` scope, and the default `secrets.GITHUB_TOKEN`
+    # cannot read cross-org packages. To enable this job:
+    #   1. Create a PAT with `read:packages` scope.
+    #   2. Save it as the `MWDAT_GH_PACKAGES_TOKEN` repository secret.
+    #   3. Set the `MWDAT_BUILD_ANDROID` repository variable to `true`.
+    if: ${{ vars.MWDAT_BUILD_ANDROID == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.x
+          channel: stable
+          cache: true
+
+      - name: pub get (example)
+        run: flutter pub get
+        working-directory: example
+
+      - name: Build APK (debug)
+        env:
+          # PAT with `read:packages` scope; see comment on the `if:` above.
+          GITHUB_TOKEN: ${{ secrets.MWDAT_GH_PACKAGES_TOKEN }}
+        run: flutter build apk --debug
+        working-directory: example

@@ -1,0 +1,27 @@
+name: camera_access
+description: >
+  A polished Flutter clone of Meta's official iOS and Android Camera Access
+  samples, built on `meta_wearables_dat_flutter`.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+  flutter: '>=3.24.0'
+
+dependencies:
+  cupertino_icons: ^1.0.8
+  flutter:
+    sdk: flutter
+  meta_wearables_dat_flutter:
+    path: ../../
+  path_provider: ^2.1.4
+  share_plus: ^10.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  very_good_analysis: ^7.0.0
+
+flutter:
+  uses-material-design: true

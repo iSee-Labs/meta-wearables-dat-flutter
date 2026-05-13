@@ -1,0 +1,98 @@
+---
+description: meta_wearables_dat_flutter plugin conventions, architecture, channel surface, and naming map
+globs: lib/**,ios/**,android/**
+---
+
+# meta_wearables_dat_flutter — Cursor rules
+
+> Full Meta DAT API reference:
+> <https://wearables.developer.meta.com/llms.txt?full=true>
+>
+> Plugin AGENTS guide: [`AGENTS.md`](../../AGENTS.md)
+
+This rule mirrors `.claude/skills/dat-conventions.md` and gives Cursor
+the same context as Claude Code and Copilot. When working on
+`lib/**`, `ios/**`, or `android/**`, this rule auto-loads.
+
+## Architecture invariants
+
+- Dart facade (`lib/meta_wearables_dat_flutter.dart`) — public
+  `Future<T>` / `Stream<T>` API, typed errors, models.
+- iOS bridge (`ios/.../*.swift`) — thin Swift wrapper around
+  `MWDATCore` / `MWDATCamera` / `MWDATMockDevice`.
+- Android bridge (`android/.../*.kt`) — thin Kotlin wrapper around the
+  equivalent native modules.
+
+Bridges do NOT contain business logic; user-visible logic belongs in
+the Dart facade.
+
+## Channel naming
+
+| Channel | Type | Purpose |
+|---------|------|---------|
+| `meta_wearables_dat_flutter` | MethodChannel | All method calls |
+| `meta_wearables_dat_flutter/registration_state` | EventChannel | `RegistrationState` |
+| `meta_wearables_dat_flutter/active_device` | EventChannel | `Device?` |
+| `meta_wearables_dat_flutter/devices` | EventChannel | `List<Device>` |
+| `meta_wearables_dat_flutter/device_session_state` | EventChannel | `DeviceSessionState` |
+| `meta_wearables_dat_flutter/device_session_errors` | EventChannel | `DeviceSessionError` |
+| `meta_wearables_dat_flutter/stream_session_state` | EventChannel | `StreamSessionState` |
+| `meta_wearables_dat_flutter/stream_session_errors` | EventChannel | `StreamSessionError` |
+| `meta_wearables_dat_flutter/video_stream_size` | EventChannel | `Size` |
+| `meta_wearables_dat_flutter/video_frames` | EventChannel | `VideoFrame` (opt-in) |
+| `meta_wearables_dat_flutter/compatibility` | EventChannel | `DeviceCompatibilityEvent` |
+| `meta_wearables_dat_flutter/mock_devices` | EventChannel | `List<MockDeviceInfo>` |
+
+## Dart conventions
+
+- Public APIs return `Future<T>` or `Stream<T>` — never callbacks.
+- Every public API has `///` dartdoc.
+- `very_good_analysis` lint rules; zero warnings.
+- Typed errors: `RegistrationError`, `UnregistrationError`,
+  `HandleUrlError`, `PermissionError`, `DeviceSessionError`,
+  `StreamSessionError`, each with `is*` getters.
+- Models live in `lib/src/models/*.dart` with JSON round-trip tests.
+
+## Swift conventions
+
+- `async`/`await` for SDK operations.
+- `AnyListenerToken.cancel()` tears down `.listen {}` publishers.
+- `@MainActor` for code touching channels/UI.
+- Never block the main thread with frame processing.
+
+## Kotlin conventions
+
+- `Flow`/`StateFlow` with `collectLatest`.
+- Dedicated `CoroutineScope` per stream + cancel in `stop*`.
+- Wrap exceptions to typed `PlatformException` codes.
+
+## Naming map (Meta SDK → Flutter plugin)
+
+| Meta type | Dart equivalent |
+|-----------|-----------------|
+| `Wearables.shared` | `MetaWearablesDat` singleton |
+| `RegistrationState` | `RegistrationState` enum |
+| `DeviceSessionState` | `DeviceSessionState` enum |
+| `StreamSessionState` | `StreamSessionState` enum |
+| `StreamSession` | hidden behind `startStreamSession()` |
+| `StreamSessionConfig` | named args on `startStreamSession()` |
+| `AutoDeviceSelector` | default selector |
+| `SpecificDeviceSelector` | `deviceUUID:` arg |
+| `MockDeviceKit` | `enableMockDevice() / *Mock*()` methods |
+
+## Performance rules
+
+- Texture path: never serialize decoded frames over MethodChannel.
+- `videoFramesStream` is opt-in; gate emission on subscriber count.
+- All event streams stop emitting when Dart cancels its subscription.
+- `stopStreamSession()` must unregister the texture.
+
+## Per-topic deep dives
+
+- Getting started: [`.claude/skills/getting-started.md`](../../.claude/skills/getting-started.md)
+- Camera streaming: [`.claude/skills/camera-streaming.md`](../../.claude/skills/camera-streaming.md)
+- Mock device: [`.claude/skills/mockdevice-testing.md`](../../.claude/skills/mockdevice-testing.md)
+- Session lifecycle: [`.claude/skills/session-lifecycle.md`](../../.claude/skills/session-lifecycle.md)
+- Permissions & registration: [`.claude/skills/permissions-registration.md`](../../.claude/skills/permissions-registration.md)
+- Debugging: [`.claude/skills/debugging.md`](../../.claude/skills/debugging.md)
+- Sample app guide: [`.claude/skills/sample-app-guide.md`](../../.claude/skills/sample-app-guide.md)
