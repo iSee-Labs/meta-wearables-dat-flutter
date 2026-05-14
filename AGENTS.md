@@ -115,8 +115,9 @@ mapping 1-to-1:
 
 ### iOS
 
-- `Info.plist`: `MWDAT` dict (`AppLinkURLScheme`, `MetaAppID`,
-  `ClientToken`, `TeamID`), `CFBundleURLTypes`,
+- `Info.plist`: `MWDAT` dict (`AppLinkURLScheme` — value MUST end
+  with `://` because Meta AI concatenates it with the callback query
+  string, `MetaAppID`, `ClientToken`, `TeamID`), `CFBundleURLTypes`,
   `LSApplicationQueriesSchemes` (with `fb-viewapp`),
   `UISupportedExternalAccessoryProtocols` (with `com.meta.ar.wearable`),
   `NSBluetoothAlwaysUsageDescription`, `NSLocalNetworkUsageDescription`,

@@ -24,6 +24,25 @@ Common pitfalls and how to recognise them.
 
 ## Runtime — registration
 
+- **iOS: Meta AI says "Allow" but never reopens your app, and your app
+  never receives a deep-link callback** — the most common cause is
+  that your `MWDAT.AppLinkURLScheme` in `Info.plist` is missing the
+  `://` suffix. Meta AI builds the callback URL by *literally
+  concatenating* this value with the query string
+  `?authorityKey=...&metaWearablesAction=register&...`. If you wrote
+  `<string>myapp</string>` instead of `<string>myapp://</string>`,
+  the callback becomes `myapp?authorityKey=...` — not a valid URL —
+  and iOS silently drops it. No error toast, no crash, no log on the
+  Flutter side. Fix: ensure the `AppLinkURLScheme` value ends with
+  `://`:
+  ```xml
+  <key>AppLinkURLScheme</key>
+  <string>myapp://</string>
+  ```
+  The scheme **without** `://` must also appear under
+  `CFBundleURLTypes[].CFBundleURLSchemes`. Verify with
+  `MetaWearablesDat.dumpDiagnostics()` — `MWDAT.AppLinkURLScheme`
+  should print with the trailing `://`.
 - **"Internal error" right after tapping "Allow" in the Meta AI app** —
   Meta AI tried to redirect back into your app via the registration
   callback URL, but the redirect failed. Symptoms: Meta AI opens
@@ -62,31 +81,21 @@ Common pitfalls and how to recognise them.
 
   Two URL-forwarding fixes depending on your iOS app lifecycle:
   - **Scene-based lifecycle** (`UIApplicationSceneManifest` present in
-    `Info.plist` + a `SceneDelegate.swift`): override
-    `scene(_:openURLContexts:)` and `scene(_:willConnectTo:options:)`
-    on your `SceneDelegate` and forward each URL to the plugin's
-    `handleUrl` method. See `example/ios/Runner/SceneDelegate.swift`
-    for the full pattern; the short version:
-    ```swift
-    override func scene(_ scene: UIScene, openURLContexts ctxs: Set<UIOpenURLContext>) {
-      super.scene(scene, openURLContexts: ctxs)
-      for ctx in ctxs {
-        // Route through AppDelegate so app_links etc. still work...
-        (UIApplication.shared.delegate as? FlutterAppDelegate)?.application(
-          UIApplication.shared, open: ctx.url, options: [:])
-        // ...and call the plugin directly as a fallback.
-        if let vc = (scene as? UIWindowScene)?.windows.first?.rootViewController
-          as? FlutterViewController {
-          FlutterMethodChannel(name: "meta_wearables_dat_flutter",
-                               binaryMessenger: vc.binaryMessenger)
-            .invokeMethod("handleUrl", arguments: ["url": ctx.url.absoluteString])
-        }
-      }
-    }
-    ```
-  - **Classic AppDelegate lifecycle** (no scene manifest): override
-    `application(_:open:options:)` on your `AppDelegate` and forward
-    the URL the same way.
+    `Info.plist` + a `SceneDelegate.swift` — the Flutter default on
+    Flutter ≥ 3.32): override `scene(_:openURLContexts:)` and
+    `scene(_:willConnectTo:options:)` on your `SceneDelegate` and
+    post the URL on `NotificationCenter` under the
+    `MetaWearablesDatHandleURL` name. The plugin subscribes to that
+    notification at registration time and routes the URL to the SDK
+    itself — see
+    [`example/ios/Runner/SceneDelegate.swift`](../example/ios/Runner/SceneDelegate.swift)
+    and the
+    [registration-flow doc](registration_flow.md#ios-scenedelegate-wiring-required-for-scene-based-apps)
+    for the full snippet.
+  - **Classic AppDelegate lifecycle** (no scene manifest): nothing to
+    do. The plugin registers itself as a
+    `FlutterApplicationLifeCycleDelegate` and the OS routes the URL
+    to it via `application(_:open:options:)` automatically.
 - **"Internal error" appears even before Meta AI opens** — Developer
   Mode is off in the Meta AI app. Fix: open the Meta AI mobile app →
   Settings → enable **Developer Mode** (older builds: Settings →
@@ -138,9 +147,22 @@ Common pitfalls and how to recognise them.
   The plugin's `MetaWearablesDat.dumpDiagnostics()` returns the runtime
   plist + a `preflight` summary so you can inspect what the SDK sees
   without rebuilding — call it from your app and print the result.
-- **Deep link does nothing** — your `MainActivity` is missing
-  `launchMode="singleTop"`, or `AppLinks` isn't subscribed before
-  `startRegistration` returns.
+- **iOS: tapping "Allow" reopens the host app, but registration
+  state never advances to `registered`** — your `SceneDelegate.swift`
+  is the Flutter default (an empty `FlutterSceneDelegate` subclass)
+  and is silently swallowing the inbound URL. iOS delivers the Meta
+  AI callback URL to `scene(_:openURLContexts:)` on the host app's
+  scene delegate, and `FlutterSceneDelegate` does not auto-forward it
+  to plugins. Add the two `scene(...)` overrides shown in
+  [Getting started, step 8](getting_started.md#2-ios-setup) (or in
+  [registration_flow.md](registration_flow.md#ios-scenedelegate-wiring-required-for-scene-based-apps))
+  to `ios/Runner/SceneDelegate.swift`. After the fix you should see
+  `[meta_wearables_dat_flutter] SceneDelegate <- open url ...` in the
+  device log right after tapping Allow.
+- **Android: deep link does nothing** — your `MainActivity` is
+  missing `launchMode="singleTop"` or the `<intent-filter>` block.
+  Re-check `AndroidManifest.xml` against the snippet in
+  [Getting started](getting_started.md#3-android-setup).
 
 ## Runtime — camera permission
 

@@ -48,7 +48,7 @@ flutter pub get
 <key>MWDAT</key>
 <dict>
   <key>AppLinkURLScheme</key>
-  <string>yourappscheme</string>
+  <string>yourappscheme://</string>
   <key>MetaAppID</key>
   <string>0</string>
   <key>ClientToken</key>
@@ -58,8 +58,11 @@ flutter pub get
 </dict>
 ```
 
-`MetaAppID = "0"` is the developer-mode sentinel. URL scheme must be
-RFC 3986 compliant (no underscores).
+`MetaAppID = "0"` is the developer-mode sentinel. The
+`AppLinkURLScheme` value MUST end with `://` — Meta AI literally
+concatenates it with the registration query string, so without the
+separator the callback URL is malformed and iOS silently drops it.
+The scheme itself must be RFC 3986 compliant (no underscores).
 
 4. Add the standard Meta keys: `CFBundleURLTypes`,
    `LSApplicationQueriesSchemes` (with `fb-viewapp`),

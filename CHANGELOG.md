@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.1
+
+Documentation, deprecation, and discoverability fixes only — no
+runtime behaviour changes vs. 0.1.0.
+
+### Deprecated
+
+- `MetaWearablesDat.startRegistration({appId, urlScheme})` — both
+  named parameters are now annotated `@Deprecated`. They have always
+  been ignored on iOS (`Wearables.shared.startRegistration()` reads
+  `MetaAppID` / `AppLinkURLScheme` from `Info.plist.MWDAT`) and on
+  Android (`Wearables.startRegistration(activity)` reads the same
+  values from `<meta-data>` and the activity's `<intent-filter>`).
+  Call sites should drop the arguments. The parameters will be
+  removed in v0.2.0.
+
+### Documentation
+
+- Fix the `Info.plist` `AppLinkURLScheme` snippet in
+  `doc/getting_started.md` and `.claude/skills/getting-started.md` to
+  end with `://`. Meta AI builds the registration callback URL by
+  literally concatenating this value with the query string, so
+  without the `://` separator the callback becomes a malformed URL
+  that iOS silently drops. The example app and `doc/troubleshooting.md`
+  were already correct; the getting-started doc was the outdated
+  one. Added a dedicated troubleshooting bullet so the symptom
+  ("Allow → app reopens but nothing happens") is searchable.
+- Document the required iOS `SceneDelegate.swift` wiring for scene-based
+  Flutter apps (Flutter ≥ 3.32). Without it, Meta AI's registration
+  callback URL is silently dropped on iOS and the SDK never advances
+  past `registering`. Added a dedicated section to
+  `doc/registration_flow.md`, a setup step to `doc/getting_started.md`,
+  a fresh troubleshooting entry, and a quick-reference note in
+  `README.md`. Verified against
+  [`example/ios/Runner/SceneDelegate.swift`](example/ios/Runner/SceneDelegate.swift).
+- README and skill snippets no longer pass the vestigial `appId` /
+  `urlScheme` arguments to `startRegistration()`.
+
+### Other
+
+- Add `flutter-plugin` to the pubspec topic list for improved
+  discoverability on pub.dev.
+
 ## 0.1.0
 
 Initial developer-preview release. Full feature and structural parity with

@@ -10,7 +10,7 @@ reimplement them._
 [![pub package](https://img.shields.io/pub/v/meta_wearables_dat_flutter.svg)](https://pub.dev/packages/meta_wearables_dat_flutter)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![style: very good analysis](https://img.shields.io/badge/style-very_good_analysis-B22C89.svg)](https://pub.dev/packages/very_good_analysis)
-[![Flutter](https://img.shields.io/badge/flutter-%3E%3D3.24.0-blue.svg)](https://flutter.dev)
+[![Flutter](https://img.shields.io/badge/flutter-%3E%3D3.32.0-blue.svg)](https://flutter.dev)
 
 The `meta_wearables_dat_flutter` plugin lets Flutter developers utilize
 Meta's AI glasses to build hands-free wearable experiences into their
@@ -86,6 +86,20 @@ flutter pub get
    in [`doc/getting_started.md`](doc/getting_started.md); see
    [`example/ios/Runner/Info.plist`](example/ios/Runner/Info.plist) for
    a working template.
+4. **Forward Meta AI's deep-link callback to the plugin.** Flutter
+   apps generated with Flutter ≥ 3.32 use a scene-based iOS lifecycle
+   (a `UIApplicationSceneManifest` in `Info.plist` + a
+   `SceneDelegate.swift`). On those apps iOS delivers the
+   registration callback URL to your **host app's** `SceneDelegate`,
+   not to the plugin. Override
+   `scene(_:willConnectTo:options:)` and `scene(_:openURLContexts:)`
+   in `ios/Runner/SceneDelegate.swift` to forward the URL via
+   `NotificationCenter` — see
+   [`example/ios/Runner/SceneDelegate.swift`](example/ios/Runner/SceneDelegate.swift)
+   for the snippet (and
+   [`doc/getting_started.md`](doc/getting_started.md#2-ios-setup),
+   step 8 for the rationale). Apps using the classic AppDelegate
+   lifecycle don't need this — the plugin auto-consumes the URL.
 
 ### Android
 
@@ -115,11 +129,10 @@ import 'package:meta_wearables_dat_flutter/meta_wearables_dat_flutter.dart';
 // 1. Permissions (Bluetooth/Internet on Android, no-op on iOS).
 await MetaWearablesDat.requestAndroidPermissions();
 
-// 2. Register with the Meta AI app via deep link.
-await MetaWearablesDat.startRegistration(
-  appId: '0',                  // "0" == Developer Mode
-  urlScheme: 'yourappscheme',
-);
+// 2. Register with the Meta AI app via deep link. `appId` and
+//    `urlScheme` are read from the host app's Info.plist / Android
+//    meta-data — no need to repeat them in Dart.
+await MetaWearablesDat.startRegistration();
 
 // 3. Camera permission (Meta AI bottom sheet).
 await MetaWearablesDat.requestCameraPermission();

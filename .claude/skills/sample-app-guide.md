@@ -64,10 +64,7 @@ class WearablesViewModel extends ChangeNotifier {
     });
   }
 
-  Future<void> register() => MetaWearablesDat.startRegistration(
-    appId: '0',
-    urlScheme: 'mywearablesapp',
-  );
+  Future<void> register() => MetaWearablesDat.startRegistration();
 
   Future<void> unregister() => MetaWearablesDat.startUnregistration();
 }

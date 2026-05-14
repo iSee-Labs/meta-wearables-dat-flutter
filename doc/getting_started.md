@@ -30,14 +30,26 @@ dependencies:
    <dict>
      <key>AppLinkURLScheme</key>
      <!--
-       MUST be RFC 3986 compliant: only letters, digits, "+", "-",
-       ".", starting with a letter. Underscores break the Meta AI
-       redirect even though iOS itself accepts them; you'll see
-       "Internal error" in Meta AI right after Allow if the scheme
-       contains `_`. Pick something short and alphanumeric, e.g.
-       `myapp` or `mywearablesapp`.
+       MUST end with the URL scheme separator "://". Meta AI builds
+       the registration callback URL by literally concatenating this
+       value with "?authorityKey=...&metaWearablesAction=register...".
+       Without the trailing "://" the callback becomes a malformed
+       URL (e.g. "myapp?authorityKey=...") which iOS silently drops
+       — Meta AI shows no error, your app never receives the URL,
+       and registration stalls in `registering`.
+
+       The scheme itself MUST be RFC 3986 compliant: only letters,
+       digits, "+", "-", ".", starting with a letter. Underscores
+       are NOT legal in URL schemes — iOS LaunchServices accepts
+       them but Meta's redirect-URL builder validates strictly and
+       refuses to call the callback (you'll see "Internal error" in
+       Meta AI right after Allow if the scheme contains `_`).
+
+       Pick something short and alphanumeric, then APPEND "://", e.g.
+       `myapp://` or `mywearablesapp://`. The same scheme (without
+       "://") must also appear under CFBundleURLTypes.
      -->
-     <string>yourappscheme</string>
+     <string>yourappscheme://</string>
      <!-- "0" = Developer Mode sentinel. The SDK skips Wearables
           Developer Center attestation when MetaAppID is "0", but the
           ClientToken / TeamID keys still have to exist. You must also
@@ -76,6 +88,60 @@ dependencies:
      <string>fb-viewapp</string>
    </array>
    ```
+8. **Forward Meta AI's deep-link callback to the plugin.** Modern
+   Flutter apps (Flutter ≥ 3.32) ship with a scene-based lifecycle —
+   a `UIApplicationSceneManifest` in `Info.plist` and a
+   `SceneDelegate.swift`. On those apps iOS delivers the registration
+   callback URL to `scene(_:openURLContexts:)` on your **host app's**
+   `SceneDelegate`, not to `AppDelegate`. Plugins cannot inject
+   themselves into your `SceneDelegate`, so you must forward the URL
+   yourself. Replace the body of `ios/Runner/SceneDelegate.swift`
+   with:
+   ```swift
+   import Flutter
+   import UIKit
+
+   class SceneDelegate: FlutterSceneDelegate {
+
+     override func scene(
+       _ scene: UIScene,
+       willConnectTo session: UISceneSession,
+       options connectionOptions: UIScene.ConnectionOptions
+     ) {
+       super.scene(scene, willConnectTo: session, options: connectionOptions)
+       forward(urlContexts: connectionOptions.urlContexts)
+     }
+
+     override func scene(
+       _ scene: UIScene,
+       openURLContexts URLContexts: Set<UIOpenURLContext>
+     ) {
+       super.scene(scene, openURLContexts: URLContexts)
+       forward(urlContexts: URLContexts)
+     }
+
+     private func forward(urlContexts: Set<UIOpenURLContext>) {
+       for context in urlContexts {
+         NotificationCenter.default.post(
+           name: Notification.Name("MetaWearablesDatHandleURL"),
+           object: nil,
+           userInfo: ["url": context.url],
+         )
+       }
+     }
+   }
+   ```
+   The plugin subscribes to the `MetaWearablesDatHandleURL`
+   notification at registration time and routes the URL to the
+   underlying SDK — you do **not** call `handleUrl(...)` from Dart.
+   If your app uses the classic AppDelegate lifecycle (no
+   `UIApplicationSceneManifest` and no `SceneDelegate.swift`), skip
+   this step; the plugin auto-consumes the URL via
+   `application(_:open:options:)`. See
+   [`example/ios/Runner/SceneDelegate.swift`](../example/ios/Runner/SceneDelegate.swift)
+   for the reference implementation and
+   [registration flow](registration_flow.md#ios-scenedelegate-wiring-required-for-scene-based-apps)
+   for the full rationale.
 
 Minimum iOS version: **17.0**.
 

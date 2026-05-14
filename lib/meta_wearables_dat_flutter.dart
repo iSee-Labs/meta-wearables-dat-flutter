@@ -94,9 +94,27 @@ abstract final class MetaWearablesDat {
 
   /// Starts the device registration flow.
   ///
+  /// Both [appId] and [urlScheme] are vestigial: every value the SDK
+  /// needs is read from the host app's `Info.plist` (`MWDAT` dict) on
+  /// iOS and `AndroidManifest.xml` `<meta-data>` on Android. Passing
+  /// them here has **no effect** on either platform and they will be
+  /// removed in v0.2.0.
+  ///
   /// Throws [RegistrationError] if registration cannot be initiated.
   static Future<void> startRegistration({
+    @Deprecated(
+      'Vestigial parameter. The iOS SDK reads MetaAppID from '
+      'Info.plist.MWDAT and the Android SDK reads APPLICATION_ID from '
+      '<meta-data>. Will be removed in v0.2.0.',
+    )
     String? appId,
+    @Deprecated(
+      'Vestigial parameter. The iOS SDK reads AppLinkURLScheme from '
+      'Info.plist.MWDAT (and that value must end with "://", because '
+      'Meta AI literally concatenates it with the callback query '
+      'string). Android reads the scheme from the activity '
+      '<intent-filter>. Will be removed in v0.2.0.',
+    )
     String? urlScheme,
   }) {
     return MetaWearablesDatPlatform.instance.startRegistration(

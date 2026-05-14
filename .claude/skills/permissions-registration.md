@@ -34,11 +34,13 @@ Your app                       Meta AI app
 ### Start
 
 ```dart
-await MetaWearablesDat.startRegistration(
-  appId: '0',                    // "0" == Developer Mode
-  urlScheme: 'yourappscheme',
-);
+await MetaWearablesDat.startRegistration();
 ```
+
+`appId` and `urlScheme` are accepted as optional parameters but
+ignored — both platforms read the active values from the host app's
+`Info.plist` (`MWDAT` dict) and `AndroidManifest.xml` `<meta-data>`
+entries. The parameters will be removed in v0.2.0.
 
 Throws `RegistrationError` if misconfigured:
 
