@@ -1,31 +1,24 @@
-_This is an **unofficial** Flutter plugin. It is not affiliated with, endorsed
-by, sponsored by, or in any way officially connected to Meta Platforms, Inc.
-"Meta", "Ray-Ban Meta", "Oakley Meta", and "Ray-Ban Display" are trademarks of
-their respective owners. This plugin links Meta's official Wearables Device
-Access Toolkit (DAT) SDKs as binary dependencies; it does not redistribute or
-reimplement them._
-
-# meta_wearables_dat_flutter
+# Meta Wearables Device Access Toolkit for Flutter
 
 [![pub package](https://img.shields.io/pub/v/meta_wearables_dat_flutter.svg)](https://pub.dev/packages/meta_wearables_dat_flutter)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![style: very good analysis](https://img.shields.io/badge/style-very_good_analysis-B22C89.svg)](https://pub.dev/packages/very_good_analysis)
 [![Flutter](https://img.shields.io/badge/flutter-%3E%3D3.32.0-blue.svg)](https://flutter.dev)
 
-The `meta_wearables_dat_flutter` plugin lets Flutter developers utilize
-Meta's AI glasses to build hands-free wearable experiences into their
-mobile applications. It bridges Meta's official iOS and Android
-Wearables Device Access Toolkit (DAT) SDKs (v0.6.0) behind a single
-Dart API so the same Flutter code reliably connects to Ray-Ban Meta,
-Oakley Meta, and Ray-Ban Display glasses on both platforms — with
-video streaming, photo capture, the Mock Device Kit, and background
-streaming all included.
+A Flutter plugin that brings Meta's Wearables Device Access Toolkit (DAT)
+to iOS and Android. Connect to Ray-Ban Meta, Oakley Meta, and Ray-Ban
+Display glasses — registration, live video streaming, photo capture, the
+Mock Device Kit, and background streaming — all behind a single Dart API.
 
-The Wearables Device Access Toolkit is in developer preview, and so is
-this plugin. Apps built with it cannot yet ship to the public App
-Store or Play Store; create an organisation and release channel in the
+Wraps Meta's official DAT SDKs (v0.6.0) as binary dependencies. The DAT
+is in developer preview; apps cannot yet ship publicly via the App Store
+or Play Store. Create an organisation and release channel in the
 [Wearables Developer Center](https://wearables.developer.meta.com/) to
-share with test users.
+share builds with test users.
+
+> **Unofficial.** Not affiliated with, endorsed by, or officially connected
+> to Meta Platforms, Inc. "Meta", "Ray-Ban Meta", "Oakley Meta", and
+> "Ray-Ban Display" are trademarks of their respective owners.
 
 ## Documentation & Community
 
