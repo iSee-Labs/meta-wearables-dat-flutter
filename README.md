@@ -65,54 +65,329 @@ dependencies:
 flutter pub get
 ```
 
+### Enable Developer Mode in the Meta AI app (one-time, per phone)
+
+Both your code and the Meta AI app on the test phone have to agree
+you are in "developer testing" mode, or the registration handshake
+will fail with `Internal error` the moment the user taps **Allow**.
+
+1. Open the **Meta AI** app on the same phone you'll run your Flutter
+   app on.
+2. Tap your profile/avatar → **Settings** → scroll to the bottom →
+   toggle **Developer Mode** on. (Older builds: **Settings →
+   Advanced → Developer Mode**.)
+
+The matching code-side switch is `MetaAppID = "0"` in your iOS
+`Info.plist` and Android `<meta-data>` — already set in the snippets
+below.
+
 ### iOS
 
-1. Enable Flutter's Swift Package Manager support once per machine:
+Pick **any short alphanumeric** URL scheme for your app (no
+underscores — they break Meta's redirect-URL builder). Examples:
+`mywearablesapp`, `metasdkdemo`. The snippets below assume
+`mywearablesapp`; replace it everywhere it appears.
 
-   ```bash
-   flutter config --enable-swift-package-manager
-   ```
+#### 1. Enable Swift Package Manager (once per machine)
 
-2. Set iOS deployment target to **17.0** in your `Runner.xcodeproj`.
-3. Add the `MWDAT` dict and the related URL-scheme / background-mode /
-   external-accessory keys to `ios/Runner/Info.plist`. The full list is
-   in [`doc/getting_started.md`](doc/getting_started.md); see
-   [`example/ios/Runner/Info.plist`](example/ios/Runner/Info.plist) for
-   a working template.
-4. **Forward Meta AI's deep-link callback to the plugin.** Flutter
-   apps generated with Flutter ≥ 3.32 use a scene-based iOS lifecycle
-   (a `UIApplicationSceneManifest` in `Info.plist` + a
-   `SceneDelegate.swift`). On those apps iOS delivers the
-   registration callback URL to your **host app's** `SceneDelegate`,
-   not to the plugin. Override
-   `scene(_:willConnectTo:options:)` and `scene(_:openURLContexts:)`
-   in `ios/Runner/SceneDelegate.swift` to forward the URL via
-   `NotificationCenter` — see
-   [`example/ios/Runner/SceneDelegate.swift`](example/ios/Runner/SceneDelegate.swift)
-   for the snippet (and
-   [`doc/getting_started.md`](doc/getting_started.md#2-ios-setup),
-   step 8 for the rationale). Apps using the classic AppDelegate
-   lifecycle don't need this — the plugin auto-consumes the URL.
+```bash
+flutter config --enable-swift-package-manager
+```
+
+#### 2. Raise the iOS deployment target to 17.0
+
+The plugin's iOS SDK requires iOS 17 minimum. Set it in **two**
+places — they must match or the build fails:
+
+`ios/Podfile` (uncomment / set the top line):
+
+```ruby
+platform :ios, '17.0'
+```
+
+`ios/Runner.xcodeproj` → open `ios/Runner.xcworkspace` in Xcode →
+**Runner** target → **General** → **Minimum Deployments** → set
+**iOS** to **17.0**.
+
+Then refresh CocoaPods:
+
+```bash
+cd ios && pod install && cd ..
+```
+
+#### 3. Add the `MWDAT` dict and related keys to `ios/Runner/Info.plist`
+
+The DAT SDK validates the `MWDAT` dict as **all-or-nothing
+attestation** — all four keys (`AppLinkURLScheme`, `MetaAppID`,
+`ClientToken`, `TeamID`) must be present and non-empty or
+`startRegistration()` throws `RegistrationError.configurationInvalid`
+before Meta AI even opens. Paste this block inside the root `<dict>`
+of `Info.plist`:
+
+```xml
+<!-- Begin required section for Meta Wearables Device Access Toolkit. -->
+<key>MWDAT</key>
+<dict>
+  <!-- MUST end with "://". Meta AI builds the callback URL by literally
+       concatenating this value with "?authorityKey=...&metaWearablesAction=
+       register&..."; without the separator the URL is malformed and iOS
+       silently drops it. The scheme itself (without "://") must also be
+       listed under CFBundleURLTypes below. RFC 3986 — alphanumeric, no
+       underscores. -->
+  <key>AppLinkURLScheme</key>
+  <string>mywearablesapp://</string>
+
+  <!-- "0" = Developer Mode sentinel. Pairs with the Meta AI app's
+       Developer Mode toggle (see above). The SDK skips Wearables
+       Developer Center attestation when MetaAppID is "0". -->
+  <key>MetaAppID</key>
+  <string>0</string>
+
+  <!-- Required to be present and non-empty. The value is not validated
+       in Developer Mode. For a published app, replace with the value
+       from https://developers.meta.com/wearables/. -->
+  <key>ClientToken</key>
+  <string>developer-mode-placeholder</string>
+
+  <!-- $(DEVELOPMENT_TEAM) is expanded by Xcode at build time from
+       Signing & Capabilities. -->
+  <key>TeamID</key>
+  <string>$(DEVELOPMENT_TEAM)</string>
+
+  <!-- Opt out of the SDK's analytics uploads to api2.ar.meta.com so a
+       partial telemetry config in Developer Mode cannot fail
+       registration with a misleading "Internal error". -->
+  <key>Analytics</key>
+  <dict>
+    <key>OptOut</key>
+    <true/>
+  </dict>
+</dict>
+
+<!-- The OS routes the Meta AI deep-link callback to whichever app
+     declares the matching scheme here. The string MUST match
+     AppLinkURLScheme above, WITHOUT the trailing "://". -->
+<key>CFBundleURLTypes</key>
+<array>
+  <dict>
+    <key>CFBundleURLSchemes</key>
+    <array>
+      <string>mywearablesapp</string>
+    </array>
+  </dict>
+</array>
+
+<!-- The DAT SDK preflights `canOpenURL("fb-viewapp://...")` before
+     it'll try to open Meta AI. Without `fb-viewapp` here iOS returns
+     false and the SDK throws configurationInvalid (raw 1) before
+     Meta AI even opens. -->
+<key>LSApplicationQueriesSchemes</key>
+<array>
+  <string>fb-viewapp</string>
+</array>
+
+<!-- Streaming session requires `audio` to be declared even if you
+     never start a stream during registration. The other three keep
+     the BT + glasses transport alive in the background. -->
+<key>UIBackgroundModes</key>
+<array>
+  <string>audio</string>
+  <string>bluetooth-central</string>
+  <string>bluetooth-peripheral</string>
+  <string>external-accessory</string>
+</array>
+
+<key>NSBluetoothAlwaysUsageDescription</key>
+<string>Needed to connect to Meta AI Glasses.</string>
+<key>NSLocalNetworkUsageDescription</key>
+<string>Allows your phone to find and connect to your glasses over Wi-Fi.</string>
+
+<key>NSBonjourServices</key>
+<array>
+  <string>_bonjour._tcp</string>
+</array>
+
+<key>UISupportedExternalAccessoryProtocols</key>
+<array>
+  <string>com.meta.ar.wearable</string>
+</array>
+<!-- End required section for Meta Wearables Device Access Toolkit. -->
+```
+
+#### 4. Forward Meta AI's deep-link callback (scene-based apps)
+
+Flutter ≥ 3.32 generates a scene-based iOS lifecycle (a
+`UIApplicationSceneManifest` block in `Info.plist` and a
+`ios/Runner/SceneDelegate.swift`). On those apps iOS delivers the
+Meta AI callback URL to your **host app's** `SceneDelegate`, not to
+the plugin — and `FlutterSceneDelegate` does not auto-forward URLs to
+plugins. Replace `ios/Runner/SceneDelegate.swift` with:
+
+```swift
+import Flutter
+import UIKit
+
+class SceneDelegate: FlutterSceneDelegate {
+
+  override func scene(
+    _ scene: UIScene,
+    willConnectTo session: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions
+  ) {
+    super.scene(scene, willConnectTo: session, options: connectionOptions)
+    forward(urlContexts: connectionOptions.urlContexts)
+  }
+
+  override func scene(
+    _ scene: UIScene,
+    openURLContexts URLContexts: Set<UIOpenURLContext>
+  ) {
+    super.scene(scene, openURLContexts: URLContexts)
+    forward(urlContexts: URLContexts)
+  }
+
+  private func forward(urlContexts: Set<UIOpenURLContext>) {
+    for context in urlContexts {
+      NotificationCenter.default.post(
+        name: Notification.Name("MetaWearablesDatHandleURL"),
+        object: nil,
+        userInfo: ["url": context.url],
+      )
+    }
+  }
+}
+```
+
+The plugin subscribes to `MetaWearablesDatHandleURL` at registration
+time and routes the URL to the SDK natively — you do **not** call
+`handleUrl(...)` from Dart. If your app uses the classic AppDelegate
+lifecycle (no scene manifest), skip this step; the plugin
+auto-consumes the URL via `application(_:open:options:)`.
 
 ### Android
 
-1. Make `MainActivity` extend `FlutterFragmentActivity`:
+Pick the same URL scheme you used on iOS (without the `://`
+suffix). The snippets below use `mywearablesapp`; replace it
+everywhere.
 
-   ```kotlin
-   import io.flutter.embedding.android.FlutterFragmentActivity
-   class MainActivity : FlutterFragmentActivity()
-   ```
+#### 1. Make `MainActivity` extend `FlutterFragmentActivity`
 
-2. Set `minSdk = 31`.
-3. Add Meta's GitHub Packages Maven repo with a `GITHUB_TOKEN` env
-   var (or `github_token=...` in `local.properties`) holding a PAT with
-   `read:packages` scope.
-4. The plugin merges its own permissions (`FOREGROUND_SERVICE`,
-   `FOREGROUND_SERVICE_CONNECTED_DEVICE`, `WAKE_LOCK`,
-   `POST_NOTIFICATIONS`) and `<service>` entry. Your app adds the
-   `MWDAT_APPLICATION_ID` / `CLIENT_TOKEN` meta-data and the deep-link
-   intent filter — see
-   [`example/android/app/src/main/AndroidManifest.xml`](example/android/app/src/main/AndroidManifest.xml).
+`android/app/src/main/kotlin/.../MainActivity.kt`:
+
+```kotlin
+import io.flutter.embedding.android.FlutterFragmentActivity
+
+class MainActivity : FlutterFragmentActivity()
+```
+
+Meta's camera-permission contract requires a `ComponentActivity`;
+`FlutterFragmentActivity` qualifies, `FlutterActivity` doesn't.
+
+#### 2. Set `minSdk = 31` and use NDK 27
+
+In `android/app/build.gradle.kts`:
+
+```kotlin
+android {
+    ndkVersion = "27.0.12077973"
+
+    defaultConfig {
+        minSdk = 31
+    }
+}
+```
+
+#### 3. Add Meta's GitHub Packages Maven repo
+
+The Meta Android DAT SDK is published to GitHub Packages and
+requires a PAT with the `read:packages` scope.
+
+In `android/settings.gradle.kts`, inside
+`dependencyResolutionManagement { repositories { ... } }`:
+
+```kotlin
+maven {
+    url = uri("https://maven.pkg.github.com/facebook/meta-wearables-dat-android")
+    credentials {
+        username = "" // not needed; the PAT carries the user
+        password = System.getenv("GITHUB_TOKEN")
+            ?: providers.gradleProperty("github_token").orNull
+            ?: ""
+    }
+}
+```
+
+Then either export `GITHUB_TOKEN` in your shell or add to
+`android/local.properties`:
+
+```properties
+github_token=ghp_yourPersonalAccessTokenWithReadPackagesScope
+```
+
+Create the PAT at
+<https://github.com/settings/tokens> with scope **`read:packages`**
+only.
+
+#### 4. Add `MWDAT` meta-data, permissions, and the deep-link intent-filter
+
+`android/app/src/main/AndroidManifest.xml`:
+
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <!-- Required by the Meta Wearables DAT SDK. -->
+  <uses-permission android:name="android.permission.BLUETOOTH" />
+  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+  <uses-permission android:name="android.permission.INTERNET" />
+
+  <application
+      android:name="${applicationName}"
+      android:label="Your App"
+      android:icon="@mipmap/ic_launcher">
+
+    <!-- "0" = Developer Mode sentinel (matches Meta AI's Developer
+         Mode toggle). For production, replace with the value from
+         https://developers.meta.com/wearables/. -->
+    <meta-data
+        android:name="com.meta.wearable.mwdat.APPLICATION_ID"
+        android:value="0" />
+    <meta-data
+        android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
+        android:value="" />
+
+    <activity
+        android:name=".MainActivity"
+        android:exported="true"
+        android:launchMode="singleTop"
+        android:theme="@style/LaunchTheme"
+        android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+        android:hardwareAccelerated="true"
+        android:windowSoftInputMode="adjustResize">
+
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+
+      <!-- Registration callback from the Meta AI app. The scheme MUST
+           match AppLinkURLScheme on iOS and the scheme you pick for
+           your app. `launchMode="singleTop"` above is required so the
+           SDK can find and route the inbound intent. -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:scheme="mywearablesapp" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>
+```
+
+The plugin's manifest already merges in `FOREGROUND_SERVICE`,
+`FOREGROUND_SERVICE_CONNECTED_DEVICE`, `WAKE_LOCK`, and
+`POST_NOTIFICATIONS` plus the background-streaming `<service>` entry,
+so you don't have to declare them.
 
 ## Integration lifecycle
 
