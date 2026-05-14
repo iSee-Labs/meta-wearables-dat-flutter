@@ -13,6 +13,7 @@ topics:
   - glasses
   - dat
   - bluetooth
+  - flutter-plugin
 
 environment:
   sdk: ^3.5.0
