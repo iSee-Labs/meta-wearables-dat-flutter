@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.4
+
+- Bump the recommended Android NDK to **28.2.13676358** in the README
+  and both bundled samples (`example/`, `samples/camera_access/`).
+  Newer Flutter plugin transitive deps (notably `jni`, pulled by
+  `share_plus`) require r28.2; AGP enforces "use highest" so any
+  consumer that pulls one of those breaks against r27. Meta's
+  `mwdat-core` AAR (built against r27) is fine on r28.2 — NDK is
+  backward compatible.
+
 ## 0.1.3
 
 - Inline the full iOS and Android setup walkthrough in the README so

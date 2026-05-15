@@ -283,13 +283,16 @@ class MainActivity : FlutterFragmentActivity()
 Meta's camera-permission contract requires a `ComponentActivity`;
 `FlutterFragmentActivity` qualifies, `FlutterActivity` doesn't.
 
-#### 2. Set `minSdk = 31` and use NDK 27
+#### 2. Set `minSdk = 31` and use NDK 28.2.13676358
 
 In `android/app/build.gradle.kts`:
 
 ```kotlin
 android {
-    ndkVersion = "27.0.12077973"
+    // Meta's `mwdat-core` AAR was built with NDK r27, but most Flutter
+    // plugin transitive deps (e.g. `jni`) require r28.2. NDK is
+    // backward compatible per AGP's "use highest" rule.
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         minSdk = 31

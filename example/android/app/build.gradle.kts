@@ -8,10 +8,12 @@ plugins {
 android {
     namespace = "com.example.meta_wearables_dat_flutter_example"
     compileSdk = flutter.compileSdkVersion
-    // Meta's `mwdat-core` AAR is built with NDK r27. We must match (or
-    // exceed) it here, otherwise AGP fails the build with "requires Android
-    // NDK 27.0.12077973".
-    ndkVersion = "27.0.12077973"
+    // Meta's `mwdat-core` AAR is built with NDK r27, but other Flutter
+    // plugins commonly bring in transitive deps that require a newer NDK
+    // (e.g. `jni` requires r28.2). Use the higher version — NDK is
+    // backward compatible per AGP's "use highest" rule, and Meta's AAR
+    // works fine on it.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

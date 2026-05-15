@@ -8,9 +8,10 @@ plugins {
 android {
     namespace = "com.iseelabs.camera_access"
     compileSdk = flutter.compileSdkVersion
-    // Meta's `mwdat-core` AAR is built with NDK r27. Match it to avoid AGP
-    // failing with "requires Android NDK 27.0.12077973".
-    ndkVersion = "27.0.12077973"
+    // Meta's `mwdat-core` AAR is built with NDK r27, but `jni` (a transitive
+    // dep of `share_plus`) requires r28.2. Use the higher version — NDK is
+    // backward compatible per AGP rules and Meta's AAR works fine on it.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
