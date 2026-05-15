@@ -166,9 +166,16 @@ Minimum iOS version: **17.0**.
      <meta-data
        android:name="com.meta.wearable.mwdat.APPLICATION_ID"
        android:value="0" /><!-- "0" = Developer Mode -->
+     <!-- Must be non-empty even in Developer Mode — an empty string
+          causes TOKEN_NOT_CONFIGURED and registration never completes. -->
      <meta-data
        android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
-       android:value="" />
+       android:value="developer-mode-placeholder" />
+     <!-- Prevents failed analytics uploads from surfacing as misleading
+          "Internal error" toasts during developer testing. -->
+     <meta-data
+       android:name="com.meta.wearable.mwdat.ANALYTICS_OPT_OUT"
+       android:value="true" />
 
      <activity android:name=".MainActivity"
        android:launchMode="singleTop" ...>

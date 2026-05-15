@@ -350,13 +350,20 @@ only.
 
     <!-- "0" = Developer Mode sentinel (matches Meta AI's Developer
          Mode toggle). For production, replace with the value from
-         https://developers.meta.com/wearables/. -->
+         https://developers.meta.com/wearables/.
+         CLIENT_TOKEN must be non-empty even in Developer Mode — an
+         empty string causes TOKEN_NOT_CONFIGURED and registration
+         never completes. ANALYTICS_OPT_OUT prevents failed analytics
+         uploads from surfacing as misleading "Internal error" toasts. -->
     <meta-data
         android:name="com.meta.wearable.mwdat.APPLICATION_ID"
         android:value="0" />
     <meta-data
         android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
-        android:value="" />
+        android:value="developer-mode-placeholder" />
+    <meta-data
+        android:name="com.meta.wearable.mwdat.ANALYTICS_OPT_OUT"
+        android:value="true" />
 
     <activity
         android:name=".MainActivity"

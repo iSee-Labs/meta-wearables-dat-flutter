@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.5
+
+- Fix Android `CLIENT_TOKEN` in both bundled apps (`example/` and
+  `samples/camera_access/`) — was an empty string `""`, which causes
+  the SDK to throw `TOKEN_NOT_CONFIGURED` and silently refuse to
+  register even when Developer Mode is on. Set to
+  `"developer-mode-placeholder"` (the SDK doesn't validate the value
+  when `APPLICATION_ID = "0"`).
+- Add `ANALYTICS_OPT_OUT = true` to both Android manifests so failed
+  analytics uploads to Meta's servers don't surface as misleading
+  "Internal error" toasts during developer testing.
+- Same fixes applied to the README and `doc/getting_started.md`
+  snippets.
+
 ## 0.1.4
 
 - Bump the recommended Android NDK to **28.2.13676358** in the README
