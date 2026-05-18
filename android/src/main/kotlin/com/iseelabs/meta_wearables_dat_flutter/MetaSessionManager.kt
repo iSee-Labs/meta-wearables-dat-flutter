@@ -43,7 +43,6 @@ import com.meta.wearable.dat.camera.types.StreamSessionState
 import com.meta.wearable.dat.camera.types.VideoFrame
 import com.meta.wearable.dat.camera.types.VideoQuality
 import com.meta.wearable.dat.core.Wearables
-import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
 import com.meta.wearable.dat.core.selectors.SpecificDeviceSelector
 import com.meta.wearable.dat.core.session.DeviceSessionState
 import com.meta.wearable.dat.core.session.Session
@@ -56,10 +55,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 internal class MetaSessionManager(
     private val textureRegistry: TextureRegistry,
@@ -113,6 +117,26 @@ internal class MetaSessionManager(
     private var lastWidth = 0
     private var lastHeight = 0
 
+    /**
+     * Number of frames we've already emitted a per-frame diagnostic for
+     * (Y / chroma min-max-mean stats). Capped at
+     * [FRAME_DIAGNOSTIC_LIMIT] so the log doesn't get spammed once we
+     * have enough signal to verify the conversion is alive and the data
+     * is varying. Reset by [stopSession].
+     */
+    private var frameDiagnosticsLogged: Int = 0
+
+    /**
+     * Serialises concurrent [startSession] calls. The Flutter sample app
+     * lets a user double-tap "Start" while the previous start is still
+     * waiting on the device link to upgrade from BLE to Bluetooth-Classic
+     * / Wi-Fi — without a guard we'd race two `Wearables.createSession`
+     * calls and the second would fail with `sessionAlreadyExists`. With
+     * the mutex, the second tap simply returns the texture id from the
+     * first start (because `textureEntry` is non-null by then).
+     */
+    private val startMutex = Mutex()
+
     fun setStateSink(sink: EventChannel.EventSink?) { stateSink = sink }
     fun setErrorSink(sink: EventChannel.EventSink?) { errorSink = sink }
     fun setSizeSink(sink: EventChannel.EventSink?) { sizeSink = sink }
@@ -138,37 +162,133 @@ internal class MetaSessionManager(
         quality: VideoQuality,
         deviceKinds: Set<String>? = null,
         videoCodec: String = "raw",
-    ): Long {
+    ): Long = startMutex.withLock {
         activeCodec = videoCodec
-        textureEntry?.let { return it.id() }
+        textureEntry?.let { return@withLock it.id() }
 
         // 1. Resolve the target device.
+        //
+        // The DAT Android SDK 0.6.0's `AutoDeviceSelector` has stricter
+        // eligibility than just "device id appears in `Wearables.devices`":
+        // it requires don-sensor signal that may not be present even when
+        // the glasses are paired and BLE-connected, and rejects with
+        // `noEligibleDevice` otherwise. This is the same gotcha the iOS
+        // bridge documents at `MetaSessionManager.swift` lines 113-131; we
+        // mirror its strategy here:
+        //
+        //   1. If the caller passed a deviceUUID, pin
+        //      `SpecificDeviceSelector` to that UUID.
+        //   2. Otherwise, pick the first paired device (optionally filtered
+        //      by `deviceKinds`) and pin `SpecificDeviceSelector` to it.
+        //   3. Only error out when no paired device matches the request
+        //      (nothing paired, or nothing matching `deviceKinds`).
+        //
+        // Note: iOS additionally prefers `linkState == .connected` then
+        // `.connecting` then any paired id. The Android SDK 0.6.0 surface
+        // we depend on does not expose a per-device link state, so we
+        // simply take the first paired id; if a future SDK release exposes
+        // it, prefer connected → connecting → any here too.
         val kindsFilter: Set<String>? = deviceKinds?.takeIf { it.isNotEmpty() }
-        val selector = if (deviceUuid != null) {
-            SpecificDeviceSelector(DeviceIdentifier(deviceUuid))
-        } else if (kindsFilter != null) {
-            // Enumerate the current device set and pick the first one
-            // whose kind matches. Android `AutoDeviceSelector` doesn't
-            // expose a public kinds filter on the 0.6.x surface, so we
-            // pin the chosen id through `SpecificDeviceSelector`.
-            val match = firstDeviceMatchingKinds(kindsFilter)
-            if (match != null) {
-                SpecificDeviceSelector(match)
-            } else {
-                AutoDeviceSelector()
+        val allIds: List<DeviceIdentifier> = try {
+            Wearables.devices.first().toList()
+        } catch (_: Throwable) {
+            emptyList()
+        }
+        val filteredIds: List<DeviceIdentifier> = if (kindsFilter != null) {
+            allIds.filter { id ->
+                kindsFilter.contains(MetaWearablesDatPlugin.wireKindForDevice(id))
             }
         } else {
-            AutoDeviceSelector()
+            allIds
         }
 
+        val selector: SpecificDeviceSelector
+        val chosenIdSource: String
+        when {
+            deviceUuid != null -> {
+                val match = filteredIds.firstOrNull { it.toString() == deviceUuid }
+                if (match != null) {
+                    selector = SpecificDeviceSelector(match)
+                    chosenIdSource = "explicit deviceUuid ($match)"
+                } else {
+                    error(
+                        "Wearables.createSession failed: explicit " +
+                            "deviceUUID=$deviceUuid is not in the current " +
+                            "paired set (paired=${allIds.size}, " +
+                            "afterKindsFilter=${filteredIds.size}).",
+                    )
+                }
+            }
+            filteredIds.isNotEmpty() -> {
+                val pick = filteredIds.first()
+                selector = SpecificDeviceSelector(pick)
+                chosenIdSource = "first paired device ($pick)"
+            }
+            kindsFilter != null -> {
+                error(
+                    "Wearables.createSession failed: no paired glasses " +
+                        "match the requested kinds=$kindsFilter " +
+                        "(paired=${allIds.size}). Open Meta AI to pair a " +
+                        "matching device, then try again.",
+                )
+            }
+            else -> {
+                error(
+                    "Wearables.createSession failed: no paired glasses " +
+                        "found. Open Meta AI to pair Ray-Ban Meta or " +
+                        "Oakley Meta glasses, then try again.",
+                )
+            }
+        }
+        android.util.Log.i(
+            "MetaSessionManager",
+            "startSession selector=$chosenIdSource",
+        )
+
         // 2. Create the DeviceSession via Meta's `Result<Session>` API.
+        //
+        // Even with a [SpecificDeviceSelector] the SDK can refuse with
+        // `noEligibleDevice` for a few seconds after the user opens the
+        // app: the glasses are paired and BLE-connected but their
+        // don-sensor / wear signal hasn't yet surfaced, which the
+        // wearable manager treats as "not eligible". Empirically this
+        // window is ≤ 5 s on fresh-out-of-the-case glasses, so we retry
+        // up to [CREATE_SESSION_MAX_RETRIES] times with
+        // [CREATE_SESSION_RETRY_DELAY_MS] between attempts before
+        // surfacing the failure to Dart. Non-transient errors (e.g. an
+        // unknown UUID) break out of the loop on the first attempt.
         var createError: String? = null
         var created: Session? = null
-        Wearables.createSession(selector)
-            .onSuccess { created = it }
-            .onFailure { error, _ -> createError = error.description }
+        var attempt = 0
+        while (created == null && attempt < CREATE_SESSION_MAX_RETRIES) {
+            createError = null
+            Wearables.createSession(selector)
+                .onSuccess { created = it }
+                .onFailure { error, _ -> createError = error.description }
+            if (created != null) break
+
+            val msg = createError ?: "unknown"
+            val isTransient = msg.contains("eligible", ignoreCase = true) ||
+                msg.contains("not ready", ignoreCase = true) ||
+                msg.contains("not connected", ignoreCase = true)
+            attempt++
+            if (!isTransient || attempt >= CREATE_SESSION_MAX_RETRIES) break
+
+            android.util.Log.i(
+                "MetaSessionManager",
+                "createSession transient failure: '$msg'. " +
+                    "Retrying in ${CREATE_SESSION_RETRY_DELAY_MS}ms " +
+                    "(attempt $attempt/$CREATE_SESSION_MAX_RETRIES).",
+            )
+            delay(CREATE_SESSION_RETRY_DELAY_MS)
+        }
         val newSession = created
-            ?: error("Wearables.createSession failed: ${createError ?: "unknown"}")
+            ?: error(
+                "Wearables.createSession failed after $attempt attempt(s): " +
+                    "${createError ?: "unknown"}. If this keeps happening, " +
+                    "force-stop Meta AI on the phone so it stops holding " +
+                    "the glasses connection, then try again.",
+            )
         session = newSession
 
         // Forward DeviceSession-level state / error flows BEFORE start so
@@ -201,8 +321,37 @@ internal class MetaSessionManager(
         }
 
         // 3. Start and wait until STARTED before adding a stream.
+        //
+        // The Meta SDK's `start()` returns immediately and the actual
+        // state transition happens asynchronously as the ACDC transport
+        // negotiates a link. On a freshly-paired device that is only
+        // reachable over BLE we have observed waits of 5-15 s while the
+        // link upgrades to Bluetooth-Classic / Wi-Fi; on a glasses-side
+        // failure (battery off, out of range, Meta AI app holding the
+        // link) the state never advances. A 30 s ceiling lets us surface
+        // a meaningful error to Dart instead of hanging the UI button.
         newSession.start()
-        newSession.state.first { it == DeviceSessionState.STARTED }
+        try {
+            withTimeout(SESSION_STARTED_TIMEOUT_MS) {
+                newSession.state.first { it == DeviceSessionState.STARTED }
+            }
+        } catch (timeout: TimeoutCancellationException) {
+            // Roll back: the orphaned device-state listener jobs would
+            // otherwise leak, and a future startSession call would fail
+            // with "session already exists".
+            deviceStateJob?.cancel(); deviceStateJob = null
+            deviceErrorJob?.cancel(); deviceErrorJob = null
+            try { newSession.stop() } catch (_: Throwable) { /* ignore */ }
+            session = null
+            throw IllegalStateException(
+                "Wearables.createSession failed: device session never " +
+                    "reached STARTED within ${SESSION_STARTED_TIMEOUT_MS / 1000}s. " +
+                    "If Meta AI is still running on the phone, force-stop it " +
+                    "(Settings → Apps → Meta AI → Force stop) so the glasses " +
+                    "can hand the connection over to this app, then try again.",
+                timeout,
+            )
+        }
 
         // 4. Add the Stream capability. When the caller selected
         // `hvc1`, ask the SDK for compressed HEVC frames via
@@ -246,7 +395,7 @@ internal class MetaSessionManager(
         // 7. Start the stream.
         streamStartElapsedNs = android.os.SystemClock.elapsedRealtimeNanos()
         resolvedStream.start()
-        return entry.id()
+        return@withLock entry.id()
     }
 
     /**
@@ -289,6 +438,7 @@ internal class MetaSessionManager(
         lastWidth = 0
         lastHeight = 0
         streamStartElapsedNs = 0L
+        frameDiagnosticsLogged = 0
     }
 
     /**
@@ -359,6 +509,22 @@ internal class MetaSessionManager(
 
         val surface = surface ?: return
 
+        // The first time we see a frame (or when the resolution
+        // changes mid-stream) tell the SurfaceTexture the producer
+        // buffer size. Without this, `Surface.lockHardwareCanvas()`
+        // returns a canvas sized to the texture's default
+        // (Flutter-controlled) buffer, which is unrelated to the
+        // 720×1280 video frame — the resulting bitmap-into-canvas
+        // scale-fit then produces a tiny / squashed / wrong-colour
+        // preview even though the YUV decode itself is correct.
+        if (lastWidth != width || lastHeight != height) {
+            textureEntry?.surfaceTexture()?.setDefaultBufferSize(width, height)
+            android.util.Log.i(
+                "MetaSessionManager",
+                "SurfaceTexture defaultBufferSize -> ${width}x$height",
+            )
+        }
+
         // Forward raw I420 to the videoFramesStream sink before we
         // start mutating the bitmap. Gated on subscriber presence to
         // keep per-frame cost free when nobody is listening.
@@ -368,9 +534,36 @@ internal class MetaSessionManager(
         }
 
         val bitmap = ensureBitmap(width, height)
-        // SDK 0.6.x: `VideoFrame.buffer` is a single I420 ByteBuffer
-        // laid out as Y | U | V (no row-stride padding). Forward it
-        // straight to YuvToArgb which expects that exact layout.
+
+        // Per-frame diagnostic: log Y / chroma min-mean-max for the
+        // first `FRAME_DIAGNOSTIC_LIMIT` frames, then drop to a low-rate
+        // heartbeat (every `FRAME_DIAGNOSTIC_HEARTBEAT_INTERVAL` frames,
+        // ≈ 1 Hz at 30 fps) for the rest of the stream. The detailed
+        // window catches stream warm-up; the heartbeat catches the
+        // transition to real video frames when the glasses are actually
+        // worn / capturing, which can happen a few seconds after the
+        // session reaches STREAMING.
+        //
+        // - Flat Y across both windows → SDK is feeding placeholders
+        //   (glasses not worn or no don-sensor signal). No code fix
+        //   helps; the preview will stay uniform.
+        // - Flat chroma but varying Y → user is filming a near-mono-
+        //   chrome real scene (white wall, hand, paper); preview will
+        //   render mostly-gray correctly.
+        val totalFrames = frameDiagnosticsLogged
+        val shouldLog = totalFrames < FRAME_DIAGNOSTIC_LIMIT ||
+            (totalFrames - FRAME_DIAGNOSTIC_LIMIT) %
+                FRAME_DIAGNOSTIC_HEARTBEAT_INTERVAL == 0
+        if (shouldLog) {
+            logFrameDiagnostics(frame, width, height, totalFrames)
+        }
+        frameDiagnosticsLogged++
+
+        // Meta DAT SDK 0.6.x always delivers tightly-packed I420 (verified
+        // against the official Android sample's `YuvToBitmapConverter` and
+        // confirmed at runtime by the HEVC decoder's `raw.pixel-format = 35`
+        // and `raw.color.matrix = 1` config). YuvToArgb uses BT.709
+        // coefficients matching the codec's advertised matrix.
         YuvToArgb.convert(
             yuvData = frame.buffer,
             width = width,
@@ -555,6 +748,95 @@ internal class MetaSessionManager(
         return created
     }
 
+    /**
+     * Per-frame logcat diagnostic for the first
+     * [FRAME_DIAGNOSTIC_LIMIT] decoded frames of a stream, then a
+     * heartbeat every [FRAME_DIAGNOSTIC_HEARTBEAT_INTERVAL] frames.
+     * Emits everything we need to verify the conversion pipeline is
+     * alive and the source data is what we think it is:
+     *
+     * - `bufRemaining` — exact byte count, so we can compare against the
+     *   tightly-packed I420 expected size (`w * h * 3 / 2`). Mismatches
+     *   mean the SDK is handing us a shape we don't support.
+     * - `Y[min/mean/max]` — luma plane stats over the first 4 KiB of Y.
+     *   Flat values mean the SDK is emitting placeholder frames during
+     *   stream warm-up; the symptom is a uniform preview.
+     * - `C[min/mean/max]` — chroma stats over the first 4 KiB after the
+     *   Y plane. Values clustered tightly around 128 indicate a
+     *   near-monochrome real scene (white wall, hand, paper).
+     * - On the very first frame, also dumps the first 32 bytes in hex
+     *   for after-the-fact verification.
+     */
+    private fun logFrameDiagnostics(
+        frame: VideoFrame,
+        width: Int,
+        height: Int,
+        index: Int,
+    ) {
+        val frameSize = width * height
+        val expected420 = frameSize + (frameSize shr 1)
+        val remaining = frame.buffer.remaining()
+
+        // Y plane stats over the first 4096 bytes — cheap and a good
+        // proxy for whether luma is varying.
+        val ySampleSize = minOf(4096, frameSize, remaining)
+        val ySample = ByteArray(ySampleSize)
+        frame.buffer.duplicate().apply { position(frame.buffer.position()) }
+            .get(ySample, 0, ySampleSize)
+        var yMin = 255
+        var yMax = 0
+        var ySum = 0L
+        for (k in 0 until ySampleSize) {
+            val v = ySample[k].toInt() and 0xff
+            if (v < yMin) yMin = v
+            if (v > yMax) yMax = v
+            ySum += v
+        }
+        val yMean = if (ySampleSize > 0) ySum / ySampleSize else 0
+
+        // Chroma area stats over the first 4096 bytes after Y.
+        val chromaStart = frame.buffer.position() + frameSize
+        val cAvailable = (frame.buffer.limit() - chromaStart).coerceAtLeast(0)
+        val cSampleSize = minOf(4096, frameSize shr 1, cAvailable)
+        var cMin = 255
+        var cMax = 0
+        var cMean = 0L
+        if (cSampleSize > 0) {
+            val cSample = ByteArray(cSampleSize)
+            frame.buffer.duplicate().apply { position(chromaStart) }
+                .get(cSample, 0, cSampleSize)
+            for (k in 0 until cSampleSize) {
+                val v = cSample[k].toInt() and 0xff
+                if (v < cMin) cMin = v
+                if (v > cMax) cMax = v
+                cMean += v
+            }
+            cMean /= cSampleSize
+        } else {
+            cMin = 0; cMax = 0; cMean = 0L
+        }
+
+        val hexSuffix = if (index == 0) {
+            val first32 = ByteArray(minOf(32, remaining))
+            frame.buffer.duplicate().apply { position(frame.buffer.position()) }
+                .get(first32, 0, first32.size)
+            " first32=" + first32.joinToString(" ") {
+                "%02x".format(it.toInt() and 0xff)
+            }
+        } else {
+            ""
+        }
+
+        android.util.Log.i(
+            "MetaSessionManager",
+            "frame#$index ${width}x${height} codec=$activeCodec " +
+                "bufRemaining=$remaining expectedI420=$expected420 " +
+                "Y[min=$yMin mean=$yMean max=$yMax] " +
+                "C[min=$cMin mean=$cMean max=$cMax]" +
+                hexSuffix,
+        )
+    }
+
     // --- State / error encoding ---------------------------------------------
 
     private fun postState(state: StreamSessionState) {
@@ -567,6 +849,13 @@ internal class MetaSessionManager(
             "Stopping" -> 5
             else -> 0
         }
+        // Mirror every Stream state transition to logcat so we can
+        // reconstruct the lifecycle even when the Dart UI label appears
+        // stuck (e.g. "Stopped" after a brief Streaming → Stopped flip).
+        android.util.Log.i(
+            "MetaSessionManager",
+            "stream state -> ${state::class.simpleName} (encoded=$encoded)",
+        )
         mainHandler.post { stateSink?.success(encoded) }
     }
 
@@ -590,6 +879,10 @@ internal class MetaSessionManager(
             "InternalError" -> "internalError"
             else -> "sessionError"
         }
+        android.util.Log.w(
+            "MetaSessionManager",
+            "stream error -> code=$code message=$message",
+        )
         mainHandler.post {
             errorSink?.success(mapOf("code" to code, "message" to message))
         }
@@ -674,26 +967,51 @@ internal class MetaSessionManager(
         return cfg
     }
 
-    /**
-     * Returns the first paired-device identifier whose mapped wire-kind
-     * is contained in [kinds]. Uses reflection to read the per-device
-     * metadata so we don't depend on a specific shape of
-     * `DeviceMetadata`.
-     */
-    private suspend fun firstDeviceMatchingKinds(
-        kinds: Set<String>,
-    ): DeviceIdentifier? {
-        val ids = try {
-            Wearables.devices.first()
-        } catch (_: Throwable) {
-            return null
-        }
-        return ids.firstOrNull { id ->
-            kinds.contains(MetaWearablesDatPlugin.wireKindForDevice(id))
-        }
-    }
-
     private companion object {
         val framePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
+        /**
+         * How long to wait for `Session.state` to reach
+         * [DeviceSessionState.STARTED] before bailing out of
+         * [startSession]. 30 s comfortably covers a worst-case BLE →
+         * Bluetooth-Classic / Wi-Fi link upgrade on a fresh pair (we
+         * see ≤ 15 s in practice) but trips fast enough on a hung
+         * handover that the Flutter UI button never feels stuck.
+         */
+        const val SESSION_STARTED_TIMEOUT_MS: Long = 30_000L
+
+        /**
+         * How many frames to emit detailed `frame#N …` diagnostics for
+         * at the start of a stream. 10 covers the typical 300-500 ms
+         * warm-up window during which the glasses are pushing
+         * placeholder / black frames before real video arrives, while
+         * still terminating quickly enough that logcat doesn't fill
+         * with per-frame spam for the lifetime of the stream.
+         */
+        const val FRAME_DIAGNOSTIC_LIMIT: Int = 10
+
+        /**
+         * After the initial [FRAME_DIAGNOSTIC_LIMIT] detailed frame
+         * logs, emit one more `frame#N …` line every N frames so we
+         * keep visibility on the stream without spamming logcat. 30
+         * frames ≈ 1 s at 30 fps — enough to spot a flat-luma →
+         * real-content transition (or its absence) over the lifetime
+         * of a session.
+         */
+        const val FRAME_DIAGNOSTIC_HEARTBEAT_INTERVAL: Int = 30
+
+        /**
+         * How many times to retry [com.meta.wearable.dat.core.Wearables.createSession]
+         * after a transient eligibility failure (the glasses are paired
+         * but their `don sensor` / wear signal hasn't surfaced yet, so
+         * the SDK refuses with `noEligibleDevice` even when we pass a
+         * `SpecificDeviceSelector`). Combined with
+         * [CREATE_SESSION_RETRY_DELAY_MS] this gives the device up to
+         * ~9 s of warm-up before we surface the error to the user.
+         */
+        const val CREATE_SESSION_MAX_RETRIES: Int = 6
+
+        /** Delay between [com.meta.wearable.dat.core.Wearables.createSession] retries, ms. */
+        const val CREATE_SESSION_RETRY_DELAY_MS: Long = 1_500L
     }
 }

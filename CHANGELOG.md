@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0
+
+### Android live preview — correct colours
+
+- Rewrite `YuvToArgb` to mirror the official Meta DAT Android sample's
+  `YuvToBitmapConverter`: tightly-packed I420 only (no layout sniffing)
+  with BT.709 limited-range coefficients. The previous BT.601 matrix
+  produced a green/purple cast on real glasses frames; BT.709 matches
+  the codec's advertised `raw.color.matrix = 1`.
+- Cache the YUV byte buffer and ARGB int buffer across frames in
+  `YuvToArgb` so the hot path is allocation-free. Eliminates ~150 MiB/s
+  of GC pressure on a 720p stream and stops mid-stream frame stalls.
+- **Fix the "wrong-colour / squashed preview" bug**: call
+  `SurfaceTexture.setDefaultBufferSize(width, height)` the first time
+  we see a frame (or whenever the resolution changes). Without this
+  the canvas returned by `Surface.lockHardwareCanvas()` was sized to
+  Flutter's default 1×1 producer buffer and the scale-fit was clamping
+  the bitmap into a tiny destination — the preview looked like a flat
+  one-colour image even when YUV decode was correct.
+
+### Android session reliability
+
+- Replace `AutoDeviceSelector` with `SpecificDeviceSelector` driven by
+  the paired device UUID (matches the iOS path). Resolves
+  `SESSION_ERROR: No eligible device found` on the first start when
+  Meta AI has just released the device.
+- Add an in-process retry loop around `Wearables.createSession` (6
+  attempts × 1.5 s) for the transient warm-up failures the underlying
+  SDK throws while the glasses transition from `AVAILABLE` to
+  `ELIGIBLE_FOR_DAT`.
+- Make `AndroidManifest.xml` Developer-Mode-ready in both bundled
+  apps: `APPLICATION_ID = "0"`, `CLIENT_TOKEN = "0"`,
+  `ANALYTICS_OPT_OUT = "true"`, `DAM_ENABLED = "true"`.
+
+### Sample app
+
+- `samples/camera_access` now fetches the paired device UUID before
+  calling `startStreamSession` and shows a "Connecting…" spinner on
+  the **Start** button while the retry loop is in flight, so the user
+  knows the first tap is doing something. The button is disabled
+  during the warm-up window.
+
+### Diagnostics
+
+- Add per-frame Y / chroma min/mean/max diagnostics to `logcat` for
+  the first 10 frames of a stream and a 1 Hz heartbeat afterwards.
+  Flat Y → SDK is streaming placeholders (glasses not worn). Flat
+  chroma + varying Y → real monochrome scene. Catches root-cause
+  questions before a screen-recording round-trip with users.
+
+### Docs
+
+- README, `doc/getting_started.md` and `doc/troubleshooting.md` now
+  document every Android Developer-Mode meta-data key (including the
+  newly-required `DAM_ENABLED`), call out that **Developer Mode in the
+  Meta AI app itself must be turned on** as a one-time per-phone step,
+  and add a dedicated troubleshooting entry for "No eligible device
+  found".
+
 ## 0.1.5
 
 - Fix Android `CLIENT_TOKEN` in both bundled apps (`example/` and

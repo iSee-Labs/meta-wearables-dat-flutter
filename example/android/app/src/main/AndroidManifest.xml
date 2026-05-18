@@ -11,20 +11,25 @@
         android:icon="@mipmap/ic_launcher">
 
         <!-- Meta Wearables Device Access Toolkit — Developer Mode.
-             APPLICATION_ID = "0" is the developer-mode sentinel; the SDK
-             skips Wearables Developer Center attestation when set to "0".
-             For production, replace both values with the AppID and
-             ClientToken from https://developers.meta.com/wearables/.
-             CLIENT_TOKEN must be non-empty (even a placeholder) or the SDK
-             throws TOKEN_NOT_CONFIGURED and registration never completes.
-             ANALYTICS_OPT_OUT prevents failed analytics uploads from
-             surfacing as misleading "Internal error" toasts during testing. -->
+             Per Meta's official docs (wearables.developer.meta.com/docs/
+             build-integration-android), in Developer Mode both
+             APPLICATION_ID and CLIENT_TOKEN must be "0". An empty string
+             throws TOKEN_NOT_CONFIGURED, and any non-"0" placeholder
+             (e.g. "developer") makes the Android SDK try a real HTTP
+             attestation against api2.ar.meta.com which returns 401.
+             For production, replace both with the AppID and ClientToken
+             from https://developers.meta.com/wearables/.
+             ANALYTICS_OPT_OUT keeps the SDK from uploading developer
+             analytics. -->
         <meta-data
             android:name="com.meta.wearable.mwdat.APPLICATION_ID"
             android:value="0" />
         <meta-data
             android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
-            android:value="developer-mode-placeholder" />
+            android:value="0" />
+        <meta-data
+            android:name="com.meta.wearable.mwdat.DAM_ENABLED"
+            android:value="true" />
         <meta-data
             android:name="com.meta.wearable.mwdat.ANALYTICS_OPT_OUT"
             android:value="true" />

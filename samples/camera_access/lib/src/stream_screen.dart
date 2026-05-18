@@ -27,6 +27,7 @@ class _StreamScreenState extends State<StreamScreen> {
   VideoStreamSize? _size;
   String? _error;
   StreamSettings _settings = const StreamSettings();
+  bool _starting = false;
 
   StreamSubscription<StreamSessionState>? _stateSub;
   StreamSubscription<Object>? _errorSub;
@@ -74,8 +75,26 @@ class _StreamScreenState extends State<StreamScreen> {
   bool get _isRecording => _recordingSink != null;
 
   Future<void> _start() async {
+    if (_starting) return;
+    setState(() {
+      _starting = true;
+      _error = null;
+    });
     try {
+      // Pick the first paired device explicitly. The plugin's Android
+      // path used to fall through to `AutoDeviceSelector` when no
+      // `deviceUUID` was passed, which Meta's Android SDK 0.6.0
+      // rejects with `noEligibleDevice` even after a successful
+      // registration handshake (the auto-selector requires don-sensor
+      // signal that may not be present right after pairing). Pinning
+      // `SpecificDeviceSelector` matches what the iOS bridge has
+      // always done and avoids the gap; the plugin v0.1.6+ does this
+      // pinning itself, but we keep the explicit call here as a
+      // belt-and-suspenders for older plugin versions and as a
+      // self-documenting example.
+      final devices = await MetaWearablesDat.getDevices();
       final id = await MetaWearablesDat.startStreamSession(
+        deviceUUID: devices.isNotEmpty ? devices.first.uuid : null,
         fps: _settings.fps,
         quality: _settings.quality,
         videoCodec: _settings.codec,
@@ -87,6 +106,8 @@ class _StreamScreenState extends State<StreamScreen> {
       }
     } on DatError catch (e) {
       if (mounted) setState(() => _error = '${e.code}: ${e.message}');
+    } finally {
+      if (mounted) setState(() => _starting = false);
     }
   }
 
@@ -336,7 +357,9 @@ class _StreamScreenState extends State<StreamScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'Session: ${_sessionState.name} • ${_settings.fps} fps • '
+                  'Session: '
+                  '${_starting ? "connecting…" : _sessionState.name} • '
+                  '${_settings.fps} fps • '
                   '${_settings.quality.name} • ${_settings.codec.name}'
                   "${_size != null ? ' • ${_size!.width}x${_size!.height}' : ''}",
                 ),
@@ -357,9 +380,16 @@ class _StreamScreenState extends State<StreamScreen> {
                   children: [
                     Expanded(
                       child: FilledButton.icon(
-                        onPressed: _isRunning ? null : _start,
-                        icon: const Icon(Icons.play_arrow),
-                        label: const Text('Start'),
+                        onPressed: (_isRunning || _starting) ? null : _start,
+                        icon: _starting
+                            ? const SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.play_arrow),
+                        label: Text(_starting ? 'Connecting…' : 'Start'),
                       ),
                     ),
                     const SizedBox(width: 8),

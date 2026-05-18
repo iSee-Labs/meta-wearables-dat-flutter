@@ -8,7 +8,7 @@
 
 ```yaml
 dependencies:
-  meta_wearables_dat_flutter: ^0.1.0
+  meta_wearables_dat_flutter: ^0.2.0
 ```
 
 ## 2. iOS setup
@@ -166,13 +166,22 @@ Minimum iOS version: **17.0**.
      <meta-data
        android:name="com.meta.wearable.mwdat.APPLICATION_ID"
        android:value="0" /><!-- "0" = Developer Mode -->
-     <!-- Must be non-empty even in Developer Mode — an empty string
-          causes TOKEN_NOT_CONFIGURED and registration never completes. -->
+     <!-- MUST be "0" in Developer Mode (per Meta's official Android
+          docs). An empty string throws TOKEN_NOT_CONFIGURED; any
+          non-"0" placeholder triggers a real HTTP attestation against
+          api2.ar.meta.com which returns 401 and registration fails. -->
      <meta-data
        android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
-       android:value="developer-mode-placeholder" />
-     <!-- Prevents failed analytics uploads from surfacing as misleading
-          "Internal error" toasts during developer testing. -->
+       android:value="0" />
+     <!-- Required for Developer Access Mode (DAM). Without this key
+          the SDK's internal `usesDam` flag stays false and the session
+          manager rejects every device with "No eligible device found"
+          even when the glasses are paired and BLE-connected. -->
+     <meta-data
+       android:name="com.meta.wearable.mwdat.DAM_ENABLED"
+       android:value="true" />
+     <!-- Prevents the SDK from uploading developer analytics during
+          testing. -->
      <meta-data
        android:name="com.meta.wearable.mwdat.ANALYTICS_OPT_OUT"
        android:value="true" />
@@ -198,6 +207,12 @@ Minimum Android: **`minSdk = 31`** (Android 12).
 
 ## 4. Enable Developer Mode in the Meta AI app
 
+> **REQUIRED before first run.** This is the single most common cause
+> of "registration silently fails" reports. The manifest changes in
+> steps 2 and 3 are necessary but **not sufficient** on their own —
+> registration is double-gated by a toggle inside the Meta AI mobile
+> app, and there is no way to flip that toggle from your code.
+
 Until your app is approved in the Wearables Developer Center, the
 registration handshake will fail unless Developer Mode is enabled
 **inside the Meta AI mobile app** on the same phone you're testing on:
@@ -209,11 +224,18 @@ registration handshake will fail unless Developer Mode is enabled
 4. Restart your Flutter app and tap "Connect glasses" again. When Meta
    AI prompts "Allow unverified app", tap **Allow**.
 
-Without this, `startRegistration()` opens Meta AI as expected, the
-"Allow unverified app" sheet appears, but the moment you tap Allow you
-get an `Internal error` callback and the registration never completes.
-The empty `MetaAppID` shipped in the sample is intentional - it pairs
-with Developer Mode. See [Troubleshooting](troubleshooting.md) for the
+What you'll see if you skipped this step:
+
+| Platform | Symptom |
+| --- | --- |
+| iOS | Meta AI opens, "Allow unverified app" sheet appears, you tap **Allow** → an `Internal error` toast pops up in Meta AI and the SDK never delivers a state past `registering`. Your app's `SceneDelegate` never receives a deep-link callback because Meta AI's own SDK refused to issue one. |
+| Android | `startRegistration()` throws `RegistrationError(code: HTTP_REQUEST_FAILED, ...)` with `HTTP 401` from `api2.ar.meta.com` (visible in `flutter logs` / `adb logcat -s flutter`). The Android SDK falls back to a real attestation HTTP call and the unauthorised app gets rejected. |
+
+Both symptoms disappear the moment the toggle is on. The `MetaAppID =
+"0"` (iOS) and `APPLICATION_ID = "0"` + `CLIENT_TOKEN = "0"` (Android)
+shipped in the snippets are intentional — they're the code-side half
+of the Developer Mode pair. See
+[Troubleshooting](troubleshooting.md#runtime--registration) for the
 full diagnosis.
 
 ## 5. Background streaming (optional)

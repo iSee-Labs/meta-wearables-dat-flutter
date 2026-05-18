@@ -96,11 +96,26 @@ Common pitfalls and how to recognise them.
     do. The plugin registers itself as a
     `FlutterApplicationLifeCycleDelegate` and the OS routes the URL
     to it via `application(_:open:options:)` automatically.
-- **"Internal error" appears even before Meta AI opens** — Developer
-  Mode is off in the Meta AI app. Fix: open the Meta AI mobile app →
-  Settings → enable **Developer Mode** (older builds: Settings →
-  Advanced → Developer Mode). Restart your Flutter app and try again.
-  See [Getting started, step
+- **"Internal error" appears even before Meta AI opens** (iOS) —
+  Developer Mode is off in the Meta AI app. Fix: open the Meta AI
+  mobile app → Settings → enable **Developer Mode** (older builds:
+  Settings → Advanced → Developer Mode). Restart your Flutter app and
+  try again. See [Getting started, step
+  4](getting_started.md#4-enable-developer-mode-in-the-meta-ai-app).
+- **Android: `RegistrationError(code: HTTP_REQUEST_FAILED, message:
+  ".../oauth/.../register?... HTTP 401 ...")`** — same root cause as
+  the iOS "Internal error" above: Developer Mode is off in the Meta
+  AI app on the test phone. Unlike iOS (which short-circuits with a
+  generic toast inside Meta AI), Android's DAT SDK proceeds to make a
+  real HTTP attestation call against `api2.ar.meta.com`, and the
+  Wearables Developer Center rejects your unverified `APPLICATION_ID`
+  with `401 Unauthorized`. The error surfaces in your Flutter app's
+  registration state stream as `RegistrationStateError`. Fix: enable
+  Developer Mode on the phone (Meta AI → Settings → Developer Mode),
+  then `flutter run` again — no rebuild of your APK is needed. The
+  `APPLICATION_ID = "0"` and `CLIENT_TOKEN = "0"` values in your
+  `AndroidManifest.xml` are correct for Developer Mode; do not change
+  them. See [Getting started, step
   4](getting_started.md#4-enable-developer-mode-in-the-meta-ai-app).
 - **`registrationStateStream` stays `unavailable`** on Android — the
   user denied `BLUETOOTH_CONNECT`, or `Wearables.initialize` ran
@@ -171,6 +186,22 @@ Common pitfalls and how to recognise them.
   `RequestPermissionContract` requires a `ComponentActivity`.
 
 ## Runtime — streaming
+
+- **Android: `SESSION_ERROR: No eligible device found`** even though the
+  glasses are paired, BLE-connected, and registration succeeded — the
+  `DAM_ENABLED` manifest key is missing. The SDK's internal `DatConfiguration`
+  reads `com.meta.wearable.mwdat.DAM_ENABLED` on startup and stores it as a
+  `usesDam` flag. The `SessionManager` uses this flag when building the session
+  request; without it the eligibility check silently fails regardless of which
+  device selector you use. Add:
+  ```xml
+  <meta-data
+      android:name="com.meta.wearable.mwdat.DAM_ENABLED"
+      android:value="true" />
+  ```
+  inside `<application>` in `AndroidManifest.xml`. A logcat warning
+  `W/MetaWearablesConfig: com.meta.wearable.mwdat.DAM_ENABLED not found in
+  manifest metadata` confirms the key is missing.
 
 - **Texture renders black** — most likely no frames are arriving.
   Common causes:
