@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.1
+
+Documentation-only release: README and getting-started guides now show
+`^0.7.0` (the install snippet in the 0.7.0 pub publish still said
+`^0.2.0` because docs were updated on GitHub after that upload).
+
 ## 0.7.0
 
 Aligns the plugin version with Meta's native DAT SDKs and adds **Display

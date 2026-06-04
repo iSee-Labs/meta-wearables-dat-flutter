@@ -61,7 +61,7 @@ Mode** enabled is required during the developer preview.
 
 ```yaml
 dependencies:
-  meta_wearables_dat_flutter: ^0.7.0
+  meta_wearables_dat_flutter: ^0.7.1
 ```
 
 ```bash
