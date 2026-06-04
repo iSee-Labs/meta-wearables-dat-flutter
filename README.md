@@ -61,7 +61,7 @@ Mode** enabled is required during the developer preview.
 
 ```yaml
 dependencies:
-  meta_wearables_dat_flutter: ^0.2.0
+  meta_wearables_dat_flutter: ^0.7.0
 ```
 
 ```bash
@@ -447,7 +447,9 @@ MetaWearablesDat.streamSessionStateStream().listen(print);
 
 See [`samples/camera_access/`](samples/camera_access/) for a complete
 integration that mirrors Meta's official iOS and Android CameraAccess
-samples.
+samples, and [`samples/display_access/`](samples/display_access/) for
+the Display Access "Car Maintenance" tutorial on Ray-Ban Display
+glasses.
 
 ## Developer Terms
 

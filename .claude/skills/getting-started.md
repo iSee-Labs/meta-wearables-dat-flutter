@@ -23,7 +23,7 @@ Access Toolkit (DAT) SDK in a Flutter app.
 
 ```yaml
 dependencies:
-  meta_wearables_dat_flutter: ^0.2.0
+  meta_wearables_dat_flutter: ^0.7.0
 ```
 
 ```bash
