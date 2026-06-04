@@ -39,13 +39,13 @@ import com.meta.wearable.dat.camera.addStream
 import com.meta.wearable.dat.camera.types.PhotoData
 import com.meta.wearable.dat.camera.types.StreamConfiguration
 import com.meta.wearable.dat.camera.types.StreamError
-import com.meta.wearable.dat.camera.types.StreamSessionState
+import com.meta.wearable.dat.camera.types.StreamState
 import com.meta.wearable.dat.camera.types.VideoFrame
 import com.meta.wearable.dat.camera.types.VideoQuality
 import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.selectors.SpecificDeviceSelector
+import com.meta.wearable.dat.core.session.DeviceSession
 import com.meta.wearable.dat.core.session.DeviceSessionState
-import com.meta.wearable.dat.core.session.Session
 import com.meta.wearable.dat.core.types.DeviceIdentifier
 import io.flutter.plugin.common.EventChannel
 import io.flutter.view.TextureRegistry
@@ -71,7 +71,7 @@ internal class MetaSessionManager(
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private var session: Session? = null
+    private var session: DeviceSession? = null
     private var stream: Stream? = null
     private var textureEntry: TextureRegistry.SurfaceTextureEntry? = null
     private var surface: Surface? = null
@@ -258,7 +258,7 @@ internal class MetaSessionManager(
         // surfacing the failure to Dart. Non-transient errors (e.g. an
         // unknown UUID) break out of the loop on the first attempt.
         var createError: String? = null
-        var created: Session? = null
+        var created: DeviceSession? = null
         var attempt = 0
         while (created == null && attempt < CREATE_SESSION_MAX_RETRIES) {
             createError = null
@@ -839,14 +839,18 @@ internal class MetaSessionManager(
 
     // --- State / error encoding ---------------------------------------------
 
-    private fun postState(state: StreamSessionState) {
-        val encoded = when (state::class.simpleName) {
-            "Stopped" -> 0
-            "WaitingForDevice" -> 1
-            "Starting" -> 2
-            "Streaming" -> 3
-            "Paused" -> 4
-            "Stopping" -> 5
+    private fun postState(state: StreamState) {
+        // DAT 0.7.0 turned `StreamState` into an enum (was a sealed class in
+        // 0.6.x), so match on `name` rather than the runtime class. The
+        // enum adds `STARTED` and a terminal `CLOSED`; both collapse onto the
+        // 6-value Dart `StreamSessionState` contract.
+        val encoded = when (state.name.uppercase().replace("_", "")) {
+            "STOPPED", "CLOSED" -> 0
+            "WAITINGFORDEVICE" -> 1
+            "STARTING" -> 2
+            "STREAMING", "STARTED" -> 3
+            "PAUSED" -> 4
+            "STOPPING" -> 5
             else -> 0
         }
         // Mirror every Stream state transition to logcat so we can
@@ -854,29 +858,29 @@ internal class MetaSessionManager(
         // stuck (e.g. "Stopped" after a brief Streaming → Stopped flip).
         android.util.Log.i(
             "MetaSessionManager",
-            "stream state -> ${state::class.simpleName} (encoded=$encoded)",
+            "stream state -> ${state.name} (encoded=$encoded)",
         )
         mainHandler.post { stateSink?.success(encoded) }
     }
 
     private fun postError(error: StreamError) {
-        // SDK 0.6.x: `StreamError` is a sealed class whose human-readable
-        // text lives on `.description` (not `.message`).
+        // DAT 0.7.0: `StreamError` is an enum whose human-readable text lives
+        // on `.description`. Match on `name` (0.6.x was a sealed class).
         val message = runCatching { error.description }
             .getOrNull()
             ?.takeIf { it.isNotEmpty() }
-            ?: error::class.java.simpleName
+            ?: error.name
         // Match Dart's `StreamSessionError` code shape: typed codes
         // for the cases the Dart facade flips into `is*` getters.
-        val code = when (error::class.simpleName) {
-            "PermissionDenied" -> "permissionDenied"
-            "ThermalCritical" -> "thermalCritical"
-            "HingesClosed", "HingeClosed" -> "hingesClosed"
-            "DeviceDisconnected", "DeviceNotConnected" -> "deviceDisconnected"
-            "DeviceNotFound" -> "deviceNotFound"
-            "Timeout" -> "timeout"
-            "VideoStreamingError" -> "videoStreamingError"
-            "InternalError" -> "internalError"
+        val code = when (error.name.uppercase().replace("_", "")) {
+            "PERMISSIONDENIED" -> "permissionDenied"
+            "THERMALCRITICAL" -> "thermalCritical"
+            "HINGESCLOSED", "HINGECLOSED" -> "hingesClosed"
+            "DEVICEDISCONNECTED", "DEVICENOTCONNECTED" -> "deviceDisconnected"
+            "DEVICENOTFOUND" -> "deviceNotFound"
+            "TIMEOUT" -> "timeout"
+            "VIDEOSTREAMINGERROR", "STREAMERROR" -> "videoStreamingError"
+            "INTERNALERROR" -> "internalError"
             else -> "sessionError"
         }
         android.util.Log.w(
@@ -902,14 +906,22 @@ internal class MetaSessionManager(
 
     private fun encodeDeviceSessionError(error: Any?): Map<String, Any?> {
         val message = error?.toString() ?: "unknown"
-        val name = error?.let { it::class.java.simpleName } ?: ""
+        // DAT 0.7.0: `DeviceSessionError` is an enum, so prefer the entry
+        // `name`; fall back to the runtime class name for older sealed-class
+        // shapes. Normalise SCREAMING_SNAKE / camelCase before matching.
+        val name = ((error as? Enum<*>)?.name
+            ?: error?.let { it::class.java.simpleName }
+            ?: "")
+            .uppercase()
+            .replace("_", "")
         val code = when (name) {
-            "NoEligibleDevice" -> "noEligibleDevice"
-            "SessionAlreadyStopped" -> "sessionAlreadyStopped"
-            "SessionAlreadyExists" -> "sessionAlreadyExists"
-            "SessionIdle" -> "sessionIdle"
-            "CapabilityAlreadyActive" -> "capabilityAlreadyActive"
-            "CapabilityNotFound" -> "capabilityNotFound"
+            "NOELIGIBLEDEVICE" -> "noEligibleDevice"
+            "SESSIONALREADYSTOPPED" -> "sessionAlreadyStopped"
+            "SESSIONALREADYEXISTS" -> "sessionAlreadyExists"
+            "SESSIONIDLE" -> "sessionIdle"
+            "CAPABILITYALREADYACTIVE" -> "capabilityAlreadyActive"
+            "CAPABILITYNOTFOUND" -> "capabilityNotFound"
+            "DATAPPONTHEGLASSESUPDATEREQUIRED" -> "datAppUpdateRequired"
             else -> "unexpectedError"
         }
         return mapOf("code" to code, "message" to message)

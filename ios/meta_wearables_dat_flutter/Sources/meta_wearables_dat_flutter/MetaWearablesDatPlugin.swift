@@ -58,6 +58,11 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
   private var mockManager: MetaMockDeviceManager?
   private let mockDevicesHandler = PassthroughStreamHandler()
 
+  // Display (MWDATDisplay). Lazily created on first use.
+  private var displayManager: MetaDisplayManager?
+  private let displayStateHandler = PassthroughStreamHandler()
+  private let displayEventsHandler = PassthroughStreamHandler()
+
   public static func register(with registrar: FlutterPluginRegistrar) {
     if !didConfigure {
       do {
@@ -124,6 +129,14 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
       name: "meta_wearables_dat_flutter/mock_devices",
       binaryMessenger: registrar.messenger()
     )
+    let displayStateChannel = FlutterEventChannel(
+      name: "meta_wearables_dat_flutter/display_state",
+      binaryMessenger: registrar.messenger()
+    )
+    let displayEventsChannel = FlutterEventChannel(
+      name: "meta_wearables_dat_flutter/display_events",
+      binaryMessenger: registrar.messenger()
+    )
 
     let instance = MetaWearablesDatPlugin()
     instance.pluginRegistrar = registrar
@@ -162,6 +175,26 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
         instance?.ensureMockManager().setMockDevicesSink(sink)
       }
     }
+    displayStateChannel.setStreamHandler(instance.displayStateHandler)
+    displayEventsChannel.setStreamHandler(instance.displayEventsHandler)
+    instance.displayStateHandler.onSinkChange = { [weak instance] sink in
+      Task { @MainActor in
+        instance?.ensureDisplayManager().setDisplayStateSink(sink)
+      }
+    }
+    instance.displayEventsHandler.onSinkChange = { [weak instance] sink in
+      Task { @MainActor in
+        instance?.ensureDisplayManager().setDisplayEventsSink(sink)
+      }
+    }
+  }
+
+  @MainActor
+  private func ensureDisplayManager() -> MetaDisplayManager {
+    if let manager = displayManager { return manager }
+    let manager = MetaDisplayManager()
+    displayManager = manager
+    return manager
   }
 
   @MainActor
@@ -476,6 +509,52 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
     case "resumeStreamSession":
       Task { @MainActor in
         await sessionManager?.resumeSession()
+        result(nil)
+      }
+
+    case "startDisplaySession":
+      let args = call.arguments as? [String: Any?]
+      let deviceUUID = args?["deviceUuid"] as? String
+      Task { @MainActor in
+        do {
+          try await ensureDisplayManager().startDisplaySession(
+            deviceUUID: deviceUUID,
+          )
+          result(nil)
+        } catch let dse as DeviceSessionError {
+          result(FlutterError(
+            code: "DEVICE_SESSION_ERROR",
+            message: Self.deviceSessionErrorCaseName(dse),
+            details: ["description": String(describing: dse)]
+          ))
+        } catch {
+          result(FlutterError(
+            code: "DEVICE_SESSION_ERROR",
+            message: error.localizedDescription,
+            details: ["description": String(describing: error)]
+          ))
+        }
+      }
+
+    case "sendDisplayView":
+      let args = call.arguments as? [String: Any?]
+      let view = (args?["view"] as? [String: Any]) ?? [:]
+      Task { @MainActor in
+        do {
+          try await ensureDisplayManager().sendDisplayView(view)
+          result(nil)
+        } catch {
+          result(FlutterError(
+            code: "DEVICE_SESSION_ERROR",
+            message: error.localizedDescription,
+            details: ["description": String(describing: error)]
+          ))
+        }
+      }
+
+    case "stopDisplaySession":
+      Task { @MainActor in
+        await displayManager?.stopDisplaySession()
         result(nil)
       }
 
@@ -873,16 +952,11 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
   /// caseName so downstream UI can show the SDK's free-form reason
   /// without parsing `errorDescription`.
   static func deviceSessionErrorCaseName(_ error: DeviceSessionError) -> String {
-    switch error {
-    case .noEligibleDevice: return "noEligibleDevice"
-    case .sessionAlreadyStopped: return "sessionAlreadyStopped"
-    case .sessionAlreadyExists: return "sessionAlreadyExists"
-    case .sessionIdle: return "sessionIdle"
-    case .capabilityAlreadyActive: return "capabilityAlreadyActive"
-    case .capabilityNotFound: return "capabilityNotFound"
-    case .unexpectedError(let description): return "unexpectedError(\(description))"
-    @unknown default: return "unknown(\(String(describing: error)))"
-    }
+    // Derived from `String(describing:)` so this keeps compiling across SDK
+    // releases that add cases (DAT 0.7.0 added
+    // `datAppOnTheGlassesUpdateRequired`). The raw value is already a readable
+    // case label, e.g. `noEligibleDevice` or `unexpectedError(...)`.
+    return String(describing: error)
   }
 
   static func registrationErrorCaseName(_ error: RegistrationError) -> String {

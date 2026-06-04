@@ -13,9 +13,9 @@
 // remote when the plugin's own module is compiled.
 
 group = "com.iseelabs.meta_wearables_dat_flutter"
-version = "0.1.0"
+version = "0.7.0"
 
-ext.mwdat_version = "0.6.0"
+ext.mwdat_version = "0.7.0"
 
 buildscript {
     ext.kotlin_version = "2.1.0"
@@ -74,6 +74,8 @@ android {
     dependencies {
         implementation("com.meta.wearable:mwdat-core:$mwdat_version")
         implementation("com.meta.wearable:mwdat-camera:$mwdat_version")
+        // Display capability (Ray-Ban Display glasses). Added in DAT 0.7.0.
+        implementation("com.meta.wearable:mwdat-display:$mwdat_version")
         // Mock Device Kit. Meta ships the mock module alongside core/camera;
         // pulled in unconditionally so host apps can develop without glasses.
         implementation("com.meta.wearable:mwdat-mockdevice:$mwdat_version")

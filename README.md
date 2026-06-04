@@ -7,10 +7,11 @@
 
 A Flutter plugin that brings Meta's Wearables Device Access Toolkit (DAT)
 to iOS and Android. Connect to Ray-Ban Meta, Oakley Meta, and Ray-Ban
-Display glasses — registration, live video streaming, photo capture, the
-Mock Device Kit, and background streaming — all behind a single Dart API.
+Display glasses — registration, live video streaming, photo capture,
+declarative on-glasses Display Access UI, the Mock Device Kit, and
+background streaming — all behind a single Dart API.
 
-Wraps Meta's official DAT SDKs (v0.6.0) as binary dependencies. The DAT
+Wraps Meta's official DAT SDKs (v0.7.0) as binary dependencies. The DAT
 is in developer preview; apps cannot yet ship publicly via the App Store
 or Play Store. Create an organisation and release channel in the
 [Wearables Developer Center](https://wearables.developer.meta.com/) to
@@ -36,6 +37,8 @@ Plugin-specific guides live in [`doc/`](doc/):
   codecs, photo capture, background streaming.
 - [`doc/frame_processing.md`](doc/frame_processing.md) — opt-in
   per-frame `videoFramesStream`, recording, OCR/ML pipelines.
+- [`doc/display_access.md`](doc/display_access.md) — declarative UI on
+  Ray-Ban Display glasses (FlexBox/Text/Image/Button/Icon/VideoPlayer).
 - [`doc/mock_device.md`](doc/mock_device.md) — Mock Device Kit.
 - [`doc/troubleshooting.md`](doc/troubleshooting.md) — common
   pitfalls.
@@ -529,6 +532,7 @@ setup needed.
   `AndroidManifest.xml`, Developer Mode.
 - **Camera streaming** — texture path, video codecs, photo capture,
   `videoFramesStream`.
+- **Display access** — declarative on-glasses UI, callbacks, video.
 - **Mock device testing** — `MockDeviceKit` from Dart.
 - **Session lifecycle** — `DeviceSession` vs `StreamSession`,
   pause/resume.

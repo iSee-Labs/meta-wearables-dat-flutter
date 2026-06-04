@@ -44,7 +44,7 @@ final class MetaSessionManager: NSObject {
   /// The DeviceSession we created via `Wearables.shared.createSession`.
   /// Owned by us; `stop()` is called from `stopSession()`.
   private var deviceSession: DeviceSession?
-  private var session: StreamSession?
+  private var session: MWDATCamera.Stream?
   private var stateToken: (any AnyListenerToken)?
   private var errorToken: (any AnyListenerToken)?
   private var frameToken: (any AnyListenerToken)?
@@ -190,7 +190,7 @@ final class MetaSessionManager: NSObject {
     // ask the SDK for HEVC NAL units and route them through a
     // `VTDecompressionPipeline` for the texture preview (so the
     // existing `Texture(textureId:)` widget keeps working).
-    let config = StreamSessionConfig(
+    let config = StreamConfiguration(
       videoCodec: videoCodec,
       resolution: quality,
       frameRate: UInt(fps)
@@ -504,7 +504,7 @@ final class MetaSessionManager: NSObject {
     }
   }
 
-  private static func encode(_ state: StreamSessionState) -> Int {
+  private static func encode(_ state: StreamState) -> Int {
     switch state {
     case .stopped: return 0
     case .waitingForDevice: return 1
@@ -516,26 +516,28 @@ final class MetaSessionManager: NSObject {
     }
   }
 
-  /// Maps `StreamSessionError` cases to typed sub-codes that Dart's
-  /// `SessionError.is*` getters key on. The Dart facade builds a typed
-  /// `SessionError(code:, message:)` from this payload.
-  private static func encode(_ error: StreamSessionError) -> [String: Any] {
+  /// Maps a `StreamError` (DAT 0.7.0 renamed `StreamSessionError`) to a
+  /// typed sub-code that Dart's `SessionError.is*` getters key on.
+  ///
+  /// We derive the code from `String(describing:)` rather than switching on
+  /// concrete enum cases so the bridge keeps compiling if Meta adds or
+  /// renames cases between SDK releases.
+  private static func encode(_ error: StreamError) -> [String: Any] {
+    let raw = String(describing: error)
+    let token = raw.split(separator: "(").first.map(String.init) ?? raw
     let code: String
-    switch error {
-    case .permissionDenied: code = "permissionDenied"
-    case .hingesClosed: code = "hingesClosed"
-    case .thermalCritical: code = "thermalCritical"
-    case .videoStreamingError: code = "videoStreamingError"
-    case .timeout: code = "timeout"
-    case .deviceNotFound, .deviceNotConnected: code = "deviceDisconnected"
-    case .internalError: code = "internalError"
-    @unknown default:
-      code = "unexpectedError"
+    switch token {
+    case "permissionDenied": code = "permissionDenied"
+    case "hingesClosed", "hingeClosed": code = "hingesClosed"
+    case "thermalCritical": code = "thermalCritical"
+    case "videoStreamingError", "streamError": code = "videoStreamingError"
+    case "timeout": code = "timeout"
+    case "deviceNotFound", "deviceNotConnected", "deviceDisconnected":
+      code = "deviceDisconnected"
+    case "internalError": code = "internalError"
+    default: code = "sessionError"
     }
-    return [
-      "code": code,
-      "message": String(describing: error),
-    ]
+    return ["code": code, "message": raw]
   }
 
   private static func encodeDeviceSessionState(_ state: DeviceSessionState) -> Int {
@@ -552,26 +554,30 @@ final class MetaSessionManager: NSObject {
 
   /// Maps `DeviceSessionError` cases to typed sub-codes for the Dart
   /// `DeviceSessionError.is*` getters.
+  ///
+  /// Derived from `String(describing:)` so the bridge keeps compiling across
+  /// SDK releases that add cases (DAT 0.7.0 added
+  /// `datAppOnTheGlassesUpdateRequired`). The `.unexpectedError` associated
+  /// description is preserved for the message when present.
   private static func encodeDeviceSessionError(_ error: DeviceSessionError) -> [String: Any] {
+    let raw = String(describing: error)
+    let token = raw.split(separator: "(").first.map(String.init) ?? raw
     let code: String
+    switch token {
+    case "noEligibleDevice": code = "noEligibleDevice"
+    case "sessionAlreadyStopped": code = "sessionAlreadyStopped"
+    case "sessionAlreadyExists": code = "sessionAlreadyExists"
+    case "sessionIdle": code = "sessionIdle"
+    case "capabilityAlreadyActive": code = "capabilityAlreadyActive"
+    case "capabilityNotFound": code = "capabilityNotFound"
+    case "datAppOnTheGlassesUpdateRequired": code = "datAppUpdateRequired"
+    default: code = "unexpectedError"
+    }
     let message: String
-    switch error {
-    case .noEligibleDevice:
-      code = "noEligibleDevice"; message = "noEligibleDevice"
-    case .sessionAlreadyStopped:
-      code = "sessionAlreadyStopped"; message = "sessionAlreadyStopped"
-    case .sessionAlreadyExists:
-      code = "sessionAlreadyExists"; message = "sessionAlreadyExists"
-    case .sessionIdle:
-      code = "sessionIdle"; message = "sessionIdle"
-    case .capabilityAlreadyActive:
-      code = "capabilityAlreadyActive"; message = "capabilityAlreadyActive"
-    case .capabilityNotFound:
-      code = "capabilityNotFound"; message = "capabilityNotFound"
-    case .unexpectedError(let description):
-      code = "unexpectedError"; message = description
-    @unknown default:
-      code = "unexpectedError"; message = String(describing: error)
+    if case let .unexpectedError(description) = error {
+      message = description
+    } else {
+      message = raw
     }
     return ["code": code, "message": message]
   }

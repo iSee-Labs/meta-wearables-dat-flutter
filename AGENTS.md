@@ -55,32 +55,39 @@ Dart API for Flutter apps integrating with Meta AI Glasses
                                        • device_session_errors
                                        • stream_session_state
                                        • stream_session_errors
-                                       • video_stream_size
-                                       • video_frames
-                                       • compatibility
-                                       • mock_devices
+ • video_stream_size
+ • video_frames
+ • compatibility
+ • mock_devices
+ • display_state
+ • display_events
         │                                  │
    ┌────┴───────────────────┐    ┌────────┴───────────────────┐
    │ iOS (Swift)            │    │ Android (Kotlin)           │
    │ MetaWearablesDatPlugin │    │ MetaWearablesDatPlugin     │
    │ MetaSessionManager     │    │ MetaSessionManager         │
+   │ MetaDisplayManager     │    │ MetaDisplayManager         │
    │ MetaMockDeviceManager  │    │ MetaMockDeviceManager      │
    └────────┬───────────────┘    └────────┬───────────────────┘
             │                             │
        MWDATCore                  com.meta.wearable.mwdat.core
        MWDATCamera                com.meta.wearable.mwdat.camera
+       MWDATDisplay               com.meta.wearable.mwdat.display
        MWDATMockDevice            com.meta.wearable.mwdat.mockdevice
 ```
 
 ### Module layout
 
-The Meta DAT SDK is organized into three modules and we keep this
+The Meta DAT SDK is organized into four modules and we keep this
 mapping 1-to-1:
 
 - **Core** — registration, device discovery, permissions, selectors
   (`Wearables`, `RegistrationState`, `Device`, `Permission`).
-- **Camera** — `DeviceSession`, `StreamSession`, `VideoFrame`,
+- **Camera** — `DeviceSession`, `Stream`, `VideoFrame`,
   `PhotoData`.
+- **Display** — `Display`, `DisplayState`, the component DSL
+  (`FlexBox`, `Text`, `Image`, `Button`, `Icon`, `VideoPlayer`) and
+  playback events.
 - **MockDevice** — `MockDeviceKit`, `MockRaybanMeta`, `MockCameraKit`
   (optional, dev-only).
 
@@ -166,6 +173,17 @@ mapping 1-to-1:
 - `capturePhoto({format})` → `Uint8List`.
 - `enableBackgroundStreaming({androidNotification?})`,
   `disableBackgroundStreaming()`.
+
+### Display (DAT 0.7.0)
+
+- `startDisplaySession({deviceUUID?})`,
+  `sendDisplayView(DisplayView)`,
+  `stopDisplaySession()`.
+- `displayStateStream()` → `DisplayState`
+  (`starting/started/stopping/stopped`).
+- Component DSL: `FlexBox`, `DisplayText`, `DisplayImage`,
+  `DisplayButton`, `DisplayIcon`, `VideoPlayer` with `onTap` /
+  `onClick` / `onPlaybackEvent` callbacks.
 
 ### Mock Device Kit
 

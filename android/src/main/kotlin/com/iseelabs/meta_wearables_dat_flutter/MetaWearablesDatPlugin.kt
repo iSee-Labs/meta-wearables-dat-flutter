@@ -71,9 +71,12 @@ class MetaWearablesDatPlugin :
     private lateinit var videoSizeChannel: EventChannel
     private lateinit var videoFramesChannel: EventChannel
     private lateinit var mockDevicesChannel: EventChannel
+    private lateinit var displayStateChannel: EventChannel
+    private lateinit var displayEventsChannel: EventChannel
 
     private var sessionManager: MetaSessionManager? = null
     private var mockManager: MetaMockDeviceManager? = null
+    private var displayManager: MetaDisplayManager? = null
 
     private var activityBinding: ActivityPluginBinding? = null
     private var activity: Activity? = null
@@ -128,6 +131,12 @@ class MetaWearablesDatPlugin :
     }
     private val mockDevicesHandler = PassthroughStreamHandler { sink ->
         mockManager?.setMockDevicesSink(sink)
+    }
+    private val displayStateHandler = PassthroughStreamHandler { sink ->
+        displayManager?.setDisplayStateSink(sink)
+    }
+    private val displayEventsHandler = PassthroughStreamHandler { sink ->
+        displayManager?.setDisplayEventsSink(sink)
     }
 
     // --- FlutterPlugin --------------------------------------------------------
@@ -203,8 +212,21 @@ class MetaWearablesDatPlugin :
         )
         mockDevicesChannel.setStreamHandler(mockDevicesHandler)
 
+        displayStateChannel = EventChannel(
+            binding.binaryMessenger,
+            "meta_wearables_dat_flutter/display_state",
+        )
+        displayStateChannel.setStreamHandler(displayStateHandler)
+
+        displayEventsChannel = EventChannel(
+            binding.binaryMessenger,
+            "meta_wearables_dat_flutter/display_events",
+        )
+        displayEventsChannel.setStreamHandler(displayEventsHandler)
+
         sessionManager = MetaSessionManager(binding.textureRegistry)
         mockManager = MetaMockDeviceManager(binding.applicationContext)
+        displayManager = MetaDisplayManager()
 
         // Force-link Meta's SDK so missing-dependency errors surface here at
         // attach time rather than later when a real method is invoked.
@@ -225,6 +247,8 @@ class MetaWearablesDatPlugin :
         videoSizeChannel.setStreamHandler(null)
         videoFramesChannel.setStreamHandler(null)
         mockDevicesChannel.setStreamHandler(null)
+        displayStateChannel.setStreamHandler(null)
+        displayEventsChannel.setStreamHandler(null)
         registrationStateHandler.cancel()
         activeDeviceHandler.cancel()
         devicesHandler.cancel()
@@ -232,6 +256,8 @@ class MetaWearablesDatPlugin :
         sessionManager?.dispose()
         sessionManager = null
         mockManager = null
+        displayManager?.dispose()
+        displayManager = null
         pluginScope.cancel()
     }
 
@@ -295,6 +321,9 @@ class MetaWearablesDatPlugin :
             "capturePhoto" -> capturePhoto(result)
             "enableBackgroundStreaming" -> enableBackgroundStreaming(call, result)
             "disableBackgroundStreaming" -> disableBackgroundStreaming(result)
+            "startDisplaySession" -> startDisplaySession(call, result)
+            "sendDisplayView" -> sendDisplayView(call, result)
+            "stopDisplaySession" -> stopDisplaySession(result)
             "enableMockDevice" -> mockCall(result) {
                 it.enable(
                     call.argument<Boolean>("initiallyRegistered") ?: true,
@@ -582,6 +611,56 @@ class MetaWearablesDatPlugin :
         }
     }
 
+    // --- Display --------------------------------------------------------------
+
+    private fun startDisplaySession(call: MethodCall, result: Result) {
+        val manager = displayManager
+        if (manager == null) {
+            result.error("DISPLAY_ERROR", "Plugin not attached to engine.", null)
+            return
+        }
+        val deviceUuid = call.argument<String>("deviceUuid")
+        pluginScope.launch {
+            try {
+                manager.startDisplaySession(deviceUuid)
+                result.success(null)
+            } catch (e: Exception) {
+                result.error(
+                    "DISPLAY_ERROR",
+                    e.message ?: e::class.java.simpleName,
+                    null,
+                )
+            }
+        }
+    }
+
+    private fun sendDisplayView(call: MethodCall, result: Result) {
+        val manager = displayManager
+        if (manager == null) {
+            result.error("DISPLAY_ERROR", "Plugin not attached to engine.", null)
+            return
+        }
+        @Suppress("UNCHECKED_CAST")
+        val view = call.argument<Map<String, Any?>>("view") ?: emptyMap()
+        pluginScope.launch {
+            try {
+                manager.sendDisplayView(view)
+                result.success(null)
+            } catch (e: Exception) {
+                result.error(
+                    "DISPLAY_ERROR",
+                    e.message ?: e::class.java.simpleName,
+                    null,
+                )
+            }
+        }
+    }
+
+    private fun stopDisplaySession(result: Result) {
+        displayManager?.stopDisplaySession()
+        result.success(null)
+    }
+
     private fun pauseStreamSession(result: Result) {
         sessionManager?.pauseSession()
         result.success(null)
@@ -650,9 +729,9 @@ class MetaWearablesDatPlugin :
             "registrationState" to mapOf(
                 "raw" to regState,
                 "name" to runCatching {
-                    // `RegistrationState` is a sealed class; use the
-                    // subclass simple name (e.g. "Registered").
-                    Wearables.registrationState.value::class.simpleName ?: "unknown"
+                    // DAT 0.7 `RegistrationState` is an enum; use the entry
+                    // name (e.g. "REGISTERED").
+                    (Wearables.registrationState.value as? Enum<*>)?.name ?: "unknown"
                 }.getOrDefault("unknown"),
             ),
             "manifestMetaData" to mapOf(
@@ -1040,24 +1119,20 @@ class MetaWearablesDatPlugin :
 
     /**
      * Maps `RegistrationState` to the int value the Dart enum understands
-     * (`unavailable=0, available=1, registering=2, registered=3`). Android's
-     * sealed `RegistrationState` exposes more fine-grained subtypes than
-     * iOS - `Unregistering` is treated as transitional `registering` and
+     * (`unavailable=0, available=1, registering=2, registered=3`). DAT 0.7's
+     * `RegistrationState` is an enum, so we key off the (normalised) entry
+     * name - `UNREGISTERING` is treated as transitional `registering` and
      * anything unrecognised falls back to `unavailable`.
      */
-    private fun stateToInt(state: RegistrationState?): Int = when (state) {
-        null -> 0
-        is RegistrationState.Registered -> 3
-        is RegistrationState.Registering -> 2
-        is RegistrationState.Unregistering -> 2
-        else -> when (state::class.simpleName) {
-            // String-name fallback for SDK case additions ("Available",
-            // "Unregistered", ...) we don't have a compile-time `is` check
-            // for. Maps known strings to their cross-platform int.
-            "Available" -> 1
+    private fun stateToInt(state: RegistrationState?): Int =
+        when (state?.name?.uppercase()?.replace("_", "")) {
+            null -> 0
+            "REGISTERED" -> 3
+            "REGISTERING" -> 2
+            "UNREGISTERING" -> 2
+            "AVAILABLE" -> 1
             else -> 0
         }
-    }
 
     /**
      * Serialises a [DeviceIdentifier] to the map shape that

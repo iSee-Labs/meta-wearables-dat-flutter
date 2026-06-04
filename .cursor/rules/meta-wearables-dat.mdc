@@ -42,6 +42,8 @@ the Dart facade.
 | `meta_wearables_dat_flutter/video_frames` | EventChannel | `VideoFrame` (opt-in) |
 | `meta_wearables_dat_flutter/compatibility` | EventChannel | `DeviceCompatibilityEvent` |
 | `meta_wearables_dat_flutter/mock_devices` | EventChannel | `List<MockDeviceInfo>` |
+| `meta_wearables_dat_flutter/display_state` | EventChannel | `DisplayState` |
+| `meta_wearables_dat_flutter/display_events` | EventChannel | `{callbackId, type, event?}` (tap/click/playback) |
 
 ## Dart conventions
 
@@ -79,6 +81,10 @@ the Dart facade.
 | `AutoDeviceSelector` | default selector |
 | `SpecificDeviceSelector` | `deviceUUID:` arg |
 | `MockDeviceKit` | `enableMockDevice() / *Mock*()` methods |
+| `Display` (MWDATDisplay) | hidden behind `startDisplaySession()` / `sendDisplayView()` |
+| `FlexBox`/`Text`/`Image`/`Button`/`Icon`/`VideoPlayer` | `FlexBox` / `DisplayText` / `DisplayImage` / `DisplayButton` / `DisplayIcon` / `VideoPlayer` |
+| `DisplayState` | `DisplayState` enum |
+| `Display.onPlaybackEvent` / `VideoPlayer.state` | `VideoPlayer(onPlaybackEvent:)` callback |
 
 ## Performance rules
 
@@ -91,6 +97,7 @@ the Dart facade.
 
 - Getting started: [`.claude/skills/getting-started.md`](../../.claude/skills/getting-started.md)
 - Camera streaming: [`.claude/skills/camera-streaming.md`](../../.claude/skills/camera-streaming.md)
+- Display access: [`.claude/skills/display-access.md`](../../.claude/skills/display-access.md)
 - Mock device: [`.claude/skills/mockdevice-testing.md`](../../.claude/skills/mockdevice-testing.md)
 - Session lifecycle: [`.claude/skills/session-lifecycle.md`](../../.claude/skills/session-lifecycle.md)
 - Permissions & registration: [`.claude/skills/permissions-registration.md`](../../.claude/skills/permissions-registration.md)

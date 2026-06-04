@@ -13,6 +13,8 @@ import 'package:meta_wearables_dat_flutter/src/models/camera_facing.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_compatibility.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_info.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_session_state.dart';
+import 'package:meta_wearables_dat_flutter/src/models/display/display_components.dart';
+import 'package:meta_wearables_dat_flutter/src/models/display/display_state.dart';
 import 'package:meta_wearables_dat_flutter/src/models/frame_data.dart';
 import 'package:meta_wearables_dat_flutter/src/models/mock_permission.dart';
 import 'package:meta_wearables_dat_flutter/src/models/photo_result.dart';
@@ -28,6 +30,9 @@ export 'package:meta_wearables_dat_flutter/src/models/dat_error.dart';
 export 'package:meta_wearables_dat_flutter/src/models/device_compatibility.dart';
 export 'package:meta_wearables_dat_flutter/src/models/device_info.dart';
 export 'package:meta_wearables_dat_flutter/src/models/device_session_state.dart';
+export 'package:meta_wearables_dat_flutter/src/models/display/display_components.dart';
+export 'package:meta_wearables_dat_flutter/src/models/display/display_playback_event.dart';
+export 'package:meta_wearables_dat_flutter/src/models/display/display_state.dart';
 export 'package:meta_wearables_dat_flutter/src/models/frame_data.dart';
 export 'package:meta_wearables_dat_flutter/src/models/mock_permission.dart';
 export 'package:meta_wearables_dat_flutter/src/models/photo_result.dart';
@@ -340,6 +345,48 @@ abstract final class MetaWearablesDat {
       deviceUUID: deviceUUID,
       format: format,
     );
+  }
+
+  // --- Display --------------------------------------------------------------
+
+  /// Attaches the display capability to a Ray-Ban Display device and starts
+  /// it, so [sendDisplayView] can render content on the glasses.
+  ///
+  /// Pass [deviceUUID] to target a specific paired device; otherwise the SDK
+  /// auto-selects the best display-capable device. Observe progress via
+  /// [displayStateStream] (the display is ready once it reaches
+  /// [DisplayState.started]).
+  ///
+  /// Throws [DeviceSessionError] if the session cannot be started (e.g.
+  /// `isDatAppUpdateRequired` when the on-glasses DAT app is too old).
+  static Future<void> startDisplaySession({String? deviceUUID}) {
+    return MetaWearablesDatPlatform.instance.startDisplaySession(
+      deviceUUID: deviceUUID,
+    );
+  }
+
+  /// Renders [view] on the glasses display, replacing whatever was shown
+  /// before.
+  ///
+  /// Build [view] declaratively with [FlexBox], [DisplayText], [DisplayImage],
+  /// [DisplayButton], [DisplayIcon] and [VideoPlayer]. Tap / click / playback
+  /// handlers attached to the tree are invoked when the user interacts with
+  /// the rendered content.
+  ///
+  /// If no display session is active yet this will attach one on demand on
+  /// platforms that support it; otherwise call [startDisplaySession] first.
+  static Future<void> sendDisplayView(DisplayView view) {
+    return MetaWearablesDatPlatform.instance.sendDisplayView(view);
+  }
+
+  /// Detaches the display capability and tears down its device session.
+  static Future<void> stopDisplaySession() {
+    return MetaWearablesDatPlatform.instance.stopDisplaySession();
+  }
+
+  /// Broadcast stream of [DisplayState] changes for the display capability.
+  static Stream<DisplayState> displayStateStream() {
+    return MetaWearablesDatPlatform.instance.displayStateStream();
   }
 
   // --- Mock Device Kit ------------------------------------------------------

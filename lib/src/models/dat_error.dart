@@ -157,6 +157,11 @@ class DeviceSessionError extends DatError {
   /// device.
   bool get isCapabilityNotFound => code == DatErrorCodes.capabilityNotFound;
 
+  /// True when the DAT app running on the glasses is too old to host the
+  /// requested session and must be updated (added in DAT 0.7.0).
+  bool get isDatAppUpdateRequired =>
+      code == DatErrorCodes.datAppUpdateRequired;
+
   /// True for any error the plugin could not map to a known case.
   bool get isUnexpectedError => code == DatErrorCodes.unexpectedError;
 
@@ -302,6 +307,10 @@ abstract final class DatErrorCodes {
 
   /// DeviceSessionError.capabilityNotFound
   static const String capabilityNotFound = 'capabilityNotFound';
+
+  /// DeviceSessionError.datAppUpdateRequired — the on-glasses DAT app must
+  /// be updated before a session can start (added in DAT 0.7.0).
+  static const String datAppUpdateRequired = 'datAppUpdateRequired';
 
   /// DeviceSessionError.unexpectedError (fallback bucket).
   static const String unexpectedError = 'unexpectedError';

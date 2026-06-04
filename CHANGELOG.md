@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.0
+
+Aligns the plugin version with Meta's native DAT SDKs and adds **Display
+Access**.
+
+### Display Access (new)
+
+- Bridge Meta DAT 0.7.0's `MWDATDisplay` (iOS) / `mwdat-display`
+  (Android) module: render a declarative UI tree on Ray-Ban Display
+  glasses.
+- New Dart API: `startDisplaySession({deviceUUID?})`,
+  `sendDisplayView(DisplayView)`, `stopDisplaySession()`, and
+  `displayStateStream()` (`DisplayState`:
+  `starting/started/stopping/stopped`).
+- Component DSL with `toJson` serialization and callback ids: `FlexBox`,
+  `DisplayText`, `DisplayImage`, `DisplayButton`, `DisplayIcon`,
+  `VideoPlayer`, plus layout / style enums and `onTap` / `onClick` /
+  `onPlaybackEvent` callbacks dispatched over a new `display_events`
+  EventChannel. Display lifecycle is reported on a new `display_state`
+  EventChannel.
+- Native `MetaDisplayManager` on both platforms rebuilds the SDK DSL from
+  JSON and routes interaction + playback callbacks back to Dart by id.
+- New sample app `samples/display_access/` porting Meta's official "Car
+  Maintenance" Display sample (list → detail → steps → video).
+- New `doc/display_access.md`, `display-access` skill, and Cursor rule
+  entries.
+
+### SDK bump
+
+- Update native pins `0.6.0 → 0.7.0` (iOS SPM `meta-wearables-dat-ios`
+  + `MWDATDisplay`; Android Maven `mwdat-*` + `mwdat-display`).
+- Adapt the camera bridge to 0.7 renames (`Stream` /
+  `StreamConfiguration` / `StreamState`) with resilient,
+  string-based state/error encoding.
+- Add `DeviceSessionError.datAppOnTheGlassesUpdateRequired`
+  (`error.isDatAppUpdateRequired`).
+
 ## 0.2.0
 
 ### Android live preview — correct colours

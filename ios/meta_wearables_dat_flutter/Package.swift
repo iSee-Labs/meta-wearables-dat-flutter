@@ -20,7 +20,7 @@ let package = Package(
   dependencies: [
     .package(
       url: "https://github.com/facebook/meta-wearables-dat-ios",
-      from: "0.6.0"
+      from: "0.7.0"
     ),
   ],
   targets: [
@@ -29,6 +29,7 @@ let package = Package(
       dependencies: [
         .product(name: "MWDATCore", package: "meta-wearables-dat-ios"),
         .product(name: "MWDATCamera", package: "meta-wearables-dat-ios"),
+        .product(name: "MWDATDisplay", package: "meta-wearables-dat-ios"),
         .product(name: "MWDATMockDevice", package: "meta-wearables-dat-ios"),
       ],
       resources: []

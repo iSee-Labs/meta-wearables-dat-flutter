@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -9,6 +10,8 @@ import 'package:meta_wearables_dat_flutter/src/models/dat_error.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_compatibility.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_info.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_session_state.dart';
+import 'package:meta_wearables_dat_flutter/src/models/display/display_components.dart';
+import 'package:meta_wearables_dat_flutter/src/models/display/display_state.dart';
 import 'package:meta_wearables_dat_flutter/src/models/frame_data.dart';
 import 'package:meta_wearables_dat_flutter/src/models/photo_result.dart';
 import 'package:meta_wearables_dat_flutter/src/models/registration_state.dart';
@@ -93,6 +96,19 @@ class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
     'meta_wearables_dat_flutter/mock_devices',
   );
 
+  /// Event channel for `displayStateStream`.
+  @visibleForTesting
+  final EventChannel displayStateChannel = const EventChannel(
+    'meta_wearables_dat_flutter/display_state',
+  );
+
+  /// Event channel carrying display tap / click / playback callbacks back to
+  /// Dart. Each event is `{callbackId, type, [event]}`.
+  @visibleForTesting
+  final EventChannel displayEventsChannel = const EventChannel(
+    'meta_wearables_dat_flutter/display_events',
+  );
+
   // Cached broadcast streams so multiple Dart-side listeners share a single
   // platform-channel subscription.
   Stream<RegistrationState>? _registrationStateStream;
@@ -106,6 +122,18 @@ class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
   Stream<VideoStreamSize>? _videoStreamSizeStream;
   Stream<VideoFrame>? _videoFramesStream;
   Stream<List<DeviceInfo>>? _mockDevicesStream;
+  Stream<DisplayState>? _displayStateStream;
+
+  /// Callback table for the view currently shown on the glasses display.
+  /// Rebuilt on every [sendDisplayView]; dispatched to from the
+  /// `display_events` channel.
+  DisplayCallbackTable? _displayCallbacks;
+
+  /// Long-lived subscription to the `display_events` channel. Lives for the
+  /// lifetime of the plugin singleton (like the cached broadcast streams
+  /// above), so it is intentionally never cancelled.
+  // ignore: cancel_subscriptions
+  StreamSubscription<dynamic>? _displayEventsSubscription;
 
   /// Latest [VideoStreamSize] observed on the `video_stream_size` channel.
   VideoStreamSize? _lastVideoStreamSize;
@@ -425,6 +453,69 @@ class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
     } on PlatformException catch (e) {
       throw _mapPlatformException(e);
     }
+  }
+
+  // --- Display --------------------------------------------------------------
+
+  @override
+  Future<void> startDisplaySession({String? deviceUUID}) async {
+    _ensureDisplayEventsListening();
+    try {
+      await methodChannel.invokeMethod<void>(
+        'startDisplaySession',
+        <String, Object?>{
+          if (deviceUUID != null) 'deviceUuid': deviceUUID,
+        },
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> sendDisplayView(DisplayView view) async {
+    _ensureDisplayEventsListening();
+    final table = DisplayCallbackTable();
+    final json = view.toJson(table);
+    // Replace the live callback table so events for the previous view stop
+    // resolving once the new view is on screen.
+    _displayCallbacks = table;
+    try {
+      await methodChannel.invokeMethod<void>(
+        'sendDisplayView',
+        <String, Object?>{'view': json},
+      );
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+  }
+
+  @override
+  Future<void> stopDisplaySession() async {
+    try {
+      await methodChannel.invokeMethod<void>('stopDisplaySession');
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(e);
+    }
+    _displayCallbacks = null;
+  }
+
+  @override
+  Stream<DisplayState> displayStateStream() {
+    return _displayStateStream ??= displayStateChannel
+        .receiveBroadcastStream()
+        .map((event) => DisplayState.fromInt(event as int?));
+  }
+
+  /// Lazily subscribes to the `display_events` channel and forwards every
+  /// event to the live [DisplayCallbackTable]. Idempotent.
+  void _ensureDisplayEventsListening() {
+    _displayEventsSubscription ??=
+        displayEventsChannel.receiveBroadcastStream().listen((event) {
+      if (event is Map) {
+        _displayCallbacks?.dispatch(event.cast<Object?, Object?>());
+      }
+    });
   }
 
   // --- Photo capture --------------------------------------------------------

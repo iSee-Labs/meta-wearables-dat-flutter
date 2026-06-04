@@ -127,6 +127,7 @@ or add `github_token=...` to `android/local.properties`.
 
 | Plugin | Meta DAT SDK | Min iOS | Min Android |
 |--------|--------------|---------|-------------|
+| 0.7.x  | 0.7.0        | 17.0    | API 31      |
 | 0.2.x  | 0.6.0        | 17.0    | API 31      |
 | 0.1.x  | 0.6.0        | 17.0    | API 31      |
 

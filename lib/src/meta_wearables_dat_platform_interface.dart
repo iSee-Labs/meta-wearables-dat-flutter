@@ -4,6 +4,8 @@ import 'package:meta_wearables_dat_flutter/src/models/camera_facing.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_compatibility.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_info.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_session_state.dart';
+import 'package:meta_wearables_dat_flutter/src/models/display/display_components.dart';
+import 'package:meta_wearables_dat_flutter/src/models/display/display_state.dart';
 import 'package:meta_wearables_dat_flutter/src/models/frame_data.dart';
 import 'package:meta_wearables_dat_flutter/src/models/photo_result.dart';
 import 'package:meta_wearables_dat_flutter/src/models/registration_state.dart';
@@ -211,6 +213,28 @@ abstract class MetaWearablesDatPlatform extends PlatformInterface {
     throw UnimplementedError(
       'disableBackgroundStreaming() has not been implemented.',
     );
+  }
+
+  // --- Display --------------------------------------------------------------
+
+  /// Implements `MetaWearablesDat.startDisplaySession`.
+  Future<void> startDisplaySession({String? deviceUUID}) {
+    throw UnimplementedError('startDisplaySession() has not been implemented.');
+  }
+
+  /// Implements `MetaWearablesDat.sendDisplayView`.
+  Future<void> sendDisplayView(DisplayView view) {
+    throw UnimplementedError('sendDisplayView() has not been implemented.');
+  }
+
+  /// Implements `MetaWearablesDat.stopDisplaySession`.
+  Future<void> stopDisplaySession() {
+    throw UnimplementedError('stopDisplaySession() has not been implemented.');
+  }
+
+  /// Implements `MetaWearablesDat.displayStateStream`.
+  Stream<DisplayState> displayStateStream() {
+    throw UnimplementedError('displayStateStream() has not been implemented.');
   }
 
   // --- Capture --------------------------------------------------------------
