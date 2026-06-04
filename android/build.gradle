@@ -13,7 +13,7 @@
 // remote when the plugin's own module is compiled.
 
 group = "com.iseelabs.meta_wearables_dat_flutter"
-version = "0.7.0"
+version = "0.7.1"
 
 ext.mwdat_version = "0.7.0"
 
