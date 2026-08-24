@@ -31,7 +31,14 @@ final class MetaDisplayManager: NSObject {
   /// The display capability attached to `deviceSession`.
   private var display: Display?
 
+  /// Guards against concurrent `startDisplaySession` calls (e.g. fast double-tap).
+  private var isStartingSession = false
+
   private var stateToken: (any AnyListenerToken)?
+
+  /// Last known display state, updated by the statePublisher listener on the
+  /// main actor. Used to poll without subscribing a second time.
+  private var currentDisplayState: DisplayState = .stopped
 
   /// The `onPlaybackEventId` of the `VideoPlayer` currently on screen, used to
   /// route `Display.onPlaybackEvent` back to the right Dart closure.
@@ -50,14 +57,51 @@ final class MetaDisplayManager: NSObject {
   /// first paired device), attaches the display capability, and starts it.
   func startDisplaySession(deviceUUID: String?) async throws {
     if display != nil { return }
+    if isStartingSession { return }
+    isStartingSession = true
+    defer { isStartingSession = false }
+
+    // A previous failed attempt may have left a dangling DeviceSession without
+    // a Display attached. Stop it so the SDK doesn't throw sessionAlreadyExists.
+    if let stale = deviceSession {
+      print("[meta_wearables_dat_flutter] startDisplaySession: stopping stale session before retry")
+      stale.stop()
+      deviceSession = nil
+    }
 
     let allIds = Wearables.shared.devices
+    print("[meta_wearables_dat_flutter] startDisplaySession: paired devices=\(allIds.count)")
+    for id in allIds {
+      let dev = Wearables.shared.deviceForIdentifier(id)
+      let supportsDisplay = dev?.deviceType().supportsDisplay ?? false
+      print("[meta_wearables_dat_flutter]   device id=\(id) type=\(String(describing: dev?.deviceType())) linkState=\(String(describing: dev?.linkState)) supportsDisplay=\(supportsDisplay)")
+    }
+
+    // Prefer display-capable devices (metaRayBanDisplay), then among those
+    // prefer connected > connecting > any paired. Falls back to all paired
+    // devices when none are display-typed (e.g. dev mode with a single device).
+    let displayIds = allIds.filter {
+      Wearables.shared.deviceForIdentifier($0)?.deviceType() == .metaRayBanDisplay
+    }
+    let candidates = displayIds.isEmpty ? allIds : displayIds
+    let bestId = candidates.first(where: {
+      Wearables.shared.deviceForIdentifier($0)?.linkState == .connected
+    }) ?? candidates.first(where: {
+      Wearables.shared.deviceForIdentifier($0)?.linkState == .connecting
+    }) ?? candidates.first
+
     let selector: any DeviceSelector
+    let chosenId: DeviceIdentifier
     if let uuid = deviceUUID, let match = allIds.first(where: { $0 == uuid }) {
+      print("[meta_wearables_dat_flutter] startDisplaySession: using explicit uuid=\(match)")
       selector = SpecificDeviceSelector(device: match)
-    } else if let pick = allIds.first {
+      chosenId = match
+    } else if let pick = bestId {
+      print("[meta_wearables_dat_flutter] startDisplaySession: using best device=\(pick)")
       selector = SpecificDeviceSelector(device: pick)
+      chosenId = pick
     } else {
+      print("[meta_wearables_dat_flutter] startDisplaySession: no paired devices, aborting")
       throw NSError(
         domain: "meta_wearables_dat_flutter",
         code: -20,
@@ -67,33 +111,65 @@ final class MetaDisplayManager: NSObject {
       )
     }
 
-    let session = try Wearables.shared.createSession(deviceSelector: selector)
+    // NOTE: Do NOT wait for `linkState == .connected` here. `session.start()`
+    // is what *drives* the BLE/Wi-Fi connection — pre-aborting on linkState
+    // would deadlock (the device only reaches `.connected` because start()
+    // pushes it there). We pin SpecificDeviceSelector and let start() + the
+    // session-state wait do the work, matching the camera path.
+    _ = chosenId
+
+    print("[meta_wearables_dat_flutter] startDisplaySession: calling createSession")
+    let session: DeviceSession
+    do {
+      session = try Wearables.shared.createSession(deviceSelector: selector)
+    } catch {
+      print("[meta_wearables_dat_flutter] startDisplaySession: createSession threw: \(error)")
+      throw error
+    }
     self.deviceSession = session
+    print("[meta_wearables_dat_flutter] startDisplaySession: session created, state=\(session.state)")
 
-    if session.state != .started {
-      try session.start()
-      try await Self.waitForDeviceSessionStarted(
-        session,
-        timeoutNs: 45_000_000_000,
-      )
+    do {
+      if session.state != .started {
+        print("[meta_wearables_dat_flutter] startDisplaySession: calling session.start()")
+        try session.start()
+        print("[meta_wearables_dat_flutter] startDisplaySession: waiting for session to reach .started (start() drives the connection)")
+        try await Self.waitForDeviceSessionStarted(
+          session,
+          timeoutNs: 45_000_000_000,
+        )
+        print("[meta_wearables_dat_flutter] startDisplaySession: session reached .started")
+      }
+
+      print("[meta_wearables_dat_flutter] startDisplaySession: calling session.addDisplay()")
+      let display = try session.addDisplay()
+      self.display = display
+      print("[meta_wearables_dat_flutter] startDisplaySession: display capability attached")
+
+      display.onPlaybackEvent = { [weak self] event in
+        Task { @MainActor in self?.handlePlaybackEvent(event) }
+      }
+      stateToken = display.statePublisher.listen { [weak self] state in
+        print("[meta_wearables_dat_flutter] displayState -> \(state)")
+        Task { @MainActor in
+          self?.currentDisplayState = state
+          self?.displayStateSink?(Self.encode(state))
+        }
+      }
+
+      await display.start()
+    } catch {
+      print("[meta_wearables_dat_flutter] startDisplaySession: failed after createSession, stopping session. error=\(error)")
+      session.stop()
+      deviceSession = nil
+      throw error
     }
-
-    let display = try session.addDisplay()
-    self.display = display
-
-    display.onPlaybackEvent = { [weak self] event in
-      Task { @MainActor in self?.handlePlaybackEvent(event) }
-    }
-    stateToken = display.statePublisher.listen { [weak self] state in
-      Task { @MainActor in self?.displayStateSink?(Self.encode(state)) }
-    }
-
-    await display.start()
   }
 
   /// Rebuilds [json] into the `MWDATDisplay` DSL and sends it to the glasses.
   func sendDisplayView(_ json: [String: Any]) async throws {
     guard let display = display else {
+      print("[meta_wearables_dat_flutter] sendDisplayView: no display session")
       throw NSError(
         domain: "meta_wearables_dat_flutter",
         code: -21,
@@ -101,6 +177,7 @@ final class MetaDisplayManager: NSObject {
           "No display session - call startDisplaySession first"],
       )
     }
+    print("[meta_wearables_dat_flutter] sendDisplayView: type=\(json["type"] as? String ?? "flexBox")")
 
     if (json["type"] as? String) == "videoPlayer" {
       let url = json["uri"] as? String ?? ""
@@ -116,13 +193,41 @@ final class MetaDisplayManager: NSObject {
     } else {
       currentVideoCallbackId = nil
       let view = buildFlexBox(json)
-      try await display.send(view)
+      do {
+        try await display.send(view)
+        print("[meta_wearables_dat_flutter] sendDisplayView: send succeeded")
+      } catch {
+        print("[meta_wearables_dat_flutter] sendDisplayView: send threw: \(error)")
+        let raw = String(describing: error)
+        if raw.contains("deviceDisconnected") || raw.contains("deviceNotConnected") {
+          // SDK docs: "If the glasses disconnect, you can restart by calling start() again."
+          // Try one restart before giving up.
+          print("[meta_wearables_dat_flutter] sendDisplayView: attempting display restart")
+          do {
+            await display.stop()
+            try await Self.waitForDisplayState(
+              self, target: .stopped, timeoutNs: 5_000_000_000)
+            await display.start()
+            try await Self.waitForDisplayState(
+              self, target: .started, timeoutNs: 10_000_000_000)
+            try await display.send(view)
+            print("[meta_wearables_dat_flutter] sendDisplayView: send succeeded after restart")
+            return
+          } catch let restartError {
+            print("[meta_wearables_dat_flutter] sendDisplayView: restart failed: \(restartError) — tearing down")
+            await stopDisplaySession()
+            throw restartError
+          }
+        }
+        throw error
+      }
     }
   }
 
   /// Detaches the display capability and tears down its device session.
   func stopDisplaySession() async {
     stateToken = nil
+    currentDisplayState = .stopped
     currentVideoCallbackId = nil
     if let display = display {
       await display.stop()
@@ -319,6 +424,37 @@ final class MetaDisplayManager: NSObject {
     if raw.hasPrefix("stopped") { return "stopped" }
     if raw.hasPrefix("error") { return "error" }
     return "unknown"
+  }
+
+  // MARK: - Display state wait
+
+  /// Polls `currentDisplayState` until it matches `target`, throwing on timeout
+  /// or an early `.stopped` when waiting for `.started`.
+  private static func waitForDisplayState(
+    _ manager: MetaDisplayManager,
+    target: DisplayState,
+    timeoutNs: UInt64,
+  ) async throws {
+    let pollIntervalNs: UInt64 = 100_000_000
+    let maxIterations = max(1, Int(timeoutNs / pollIntervalNs))
+    for _ in 0..<maxIterations {
+      if manager.currentDisplayState == target { return }
+      if target == .started && manager.currentDisplayState == .stopped {
+        throw NSError(
+          domain: "meta_wearables_dat_flutter",
+          code: -24,
+          userInfo: [NSLocalizedDescriptionKey:
+            "Display stopped while waiting to reach .started"],
+        )
+      }
+      try? await Task.sleep(nanoseconds: pollIntervalNs)
+    }
+    throw NSError(
+      domain: "meta_wearables_dat_flutter",
+      code: -25,
+      userInfo: [NSLocalizedDescriptionKey:
+        "Timeout waiting for display state \(target)"],
+    )
   }
 
   // MARK: - DeviceSession wait

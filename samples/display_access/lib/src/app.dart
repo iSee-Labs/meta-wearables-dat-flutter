@@ -30,6 +30,7 @@ class _AppState extends State<App> {
   StreamSubscription<RegistrationState>? _regSub;
   StreamSubscription<DeviceInfo?>? _deviceSub;
   StreamSubscription<DisplayState>? _displaySub;
+  StreamSubscription<List<DeviceInfo>>? _devicesSub;
 
   @override
   void initState() {
@@ -41,8 +42,37 @@ class _AppState extends State<App> {
       if (mounted) setState(() => _activeDevice = d);
     });
     _displaySub = MetaWearablesDat.displayStateStream().listen((s) {
-      if (mounted) setState(() => _displayState = s);
+      if (!mounted) return;
+      debugPrint('[display_access] displayState -> $s');
+      setState(() => _displayState = s);
+      // If the display drops to stopped while we think it's active,
+      // reset so the user can restart cleanly.
+      if (s == DisplayState.stopped && _displayActive) {
+        setState(() {
+          _displayActive = false;
+          _tutorial = null;
+          _screen = DisplayScreen.list;
+        });
+      }
     });
+    // Live device/link-state logger — shows whether the Display glasses ever
+    // reach `connected`. Don/doff the glasses and watch the transitions here.
+    _devicesSub = MetaWearablesDat.devicesStream().listen((devices) {
+      for (final d in devices) {
+        debugPrint(
+          '[display_access] device "${d.name}" kind=${d.kind} '
+          'link=${d.linkState} uuid=${d.uuid}',
+        );
+      }
+    });
+  }
+
+  /// Dumps the SDK's own diagnostics (registration, paired devices, plist
+  /// validation) to the console. Wired to the Diagnostics button.
+  Future<void> _dumpDiagnostics() async {
+    final diag = await MetaWearablesDat.dumpDiagnostics();
+    debugPrint('[display_access] diagnostics: $diag');
+    if (mounted) _toast('Diagnostics dumped to console');
   }
 
   @override
@@ -50,6 +80,7 @@ class _AppState extends State<App> {
     _regSub?.cancel();
     _deviceSub?.cancel();
     _displaySub?.cancel();
+    _devicesSub?.cancel();
     super.dispose();
   }
 
@@ -81,6 +112,7 @@ class _AppState extends State<App> {
   }
 
   Future<void> _startDisplay() async {
+    if (_displayActive) return;
     try {
       await MetaWearablesDat.startDisplaySession();
       if (!mounted) return;
@@ -88,11 +120,33 @@ class _AppState extends State<App> {
         _displayActive = true;
         _screen = DisplayScreen.list;
       });
+      // Wait for the display capability to reach .started before sending content.
+      await MetaWearablesDat.displayStateStream()
+          .firstWhere((s) => s == DisplayState.started)
+          .timeout(const Duration(seconds: 15));
+      // Brief grace period — glasses need a moment to stabilize after started.
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
+      // DIAGNOSTIC: send the simplest possible view first to isolate whether
+      // the deviceDisconnected-on-send is payload-related (complex list +
+      // remote images) or a raw connection-stability issue.
+      debugPrint('[display_access] sending minimal smoke-test view');
+      await _send(
+        const FlexBox(
+          spacing: 12,
+          children: [
+            DisplayText('Hello, glasses!', style: DisplayTextStyle.heading),
+          ],
+        ),
+      );
+      debugPrint('[display_access] minimal view sent; now sending full list');
       await _showList();
     } on DatError catch (e) {
-      _toast('Display failed: ${e.code}');
+      _toast('Display failed: ${e.code} | ${e.message}');
+      if (mounted) setState(() => _displayActive = false);
     } on Object catch (e) {
       _toast('Display failed: $e');
+      if (mounted) setState(() => _displayActive = false);
     }
   }
 
@@ -107,10 +161,20 @@ class _AppState extends State<App> {
   }
 
   Future<void> _send(DisplayView view) async {
+    if (!_displayActive) return;
     try {
       await MetaWearablesDat.sendDisplayView(view);
     } on DatError catch (e) {
-      _toast('Send failed: ${e.code}');
+      _toast('Send failed: ${e.code} | ${e.message}');
+      // The native side tears down the session on a fatal send error
+      // (e.g. deviceDisconnected); reset so the UI stops offering sends.
+      if (mounted) {
+        setState(() {
+          _displayActive = false;
+          _tutorial = null;
+          _screen = DisplayScreen.list;
+        });
+      }
     }
   }
 
@@ -197,10 +261,24 @@ class _AppState extends State<App> {
             stepIndex: _stepIndex,
           ),
           const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: _requestPermissions,
-            icon: const Icon(Icons.bluetooth),
-            label: const Text('Request Bluetooth / Internet'),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _requestPermissions,
+                  icon: const Icon(Icons.bluetooth),
+                  label: const Text('Request BT / Net'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _dumpDiagnostics,
+                  icon: const Icon(Icons.bug_report),
+                  label: const Text('Diagnostics'),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Row(

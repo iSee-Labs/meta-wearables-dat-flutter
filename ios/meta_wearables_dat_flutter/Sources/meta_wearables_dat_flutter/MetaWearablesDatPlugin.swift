@@ -999,10 +999,19 @@ public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
     return Wearables.shared.devices.map { id in
       let device = Wearables.shared.deviceForIdentifier(id)
       let name = device?.nameOrId() ?? id
+      let linkStateName: String
+      switch device?.linkState {
+      case .disconnected?: linkStateName = "disconnected"
+      case .connecting?: linkStateName = "connecting"
+      case .connected?: linkStateName = "connected"
+      case nil: linkStateName = "unknown"
+      @unknown default: linkStateName = "unknown"
+      }
       return [
         "uuid": id,
         "name": name,
         "kind": Self.kindName(for: device?.deviceType()),
+        "linkState": linkStateName,
       ]
     }
   }
@@ -1126,10 +1135,19 @@ private final class ActiveDeviceStreamHandler: NSObject, FlutterStreamHandler {
     guard let id else { return NSNull() }
     let device = Wearables.shared.deviceForIdentifier(id)
     let name = device?.nameOrId() ?? id
+    let linkStateName: String
+    switch device?.linkState {
+    case .disconnected?: linkStateName = "disconnected"
+    case .connecting?: linkStateName = "connecting"
+    case .connected?: linkStateName = "connected"
+    case nil: linkStateName = "unknown"
+    @unknown default: linkStateName = "unknown"
+    }
     return [
       "uuid": id,
       "name": name,
       "kind": MetaWearablesDatPlugin.kindName(for: device?.deviceType()),
+      "linkState": linkStateName,
     ] as [String: Any]
   }
 }

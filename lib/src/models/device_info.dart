@@ -8,17 +8,19 @@ class DeviceInfo {
     required this.uuid,
     required this.name,
     required this.kind,
+    this.linkState,
   });
 
   /// Constructs a [DeviceInfo] from a platform-channel map.
   ///
   /// Tolerant of missing fields: anything absent falls back to a sensible
-  /// default ([DeviceKind.unknown] / empty strings).
+  /// default ([DeviceKind.unknown] / empty strings / null link state).
   factory DeviceInfo.fromMap(Map<Object?, Object?> map) {
     return DeviceInfo(
       uuid: map['uuid'] as String? ?? '',
       name: map['name'] as String? ?? '',
       kind: DeviceKind.fromRaw(map['kind'] as String?),
+      linkState: map['linkState'] as String?,
     );
   }
 
@@ -31,8 +33,15 @@ class DeviceInfo {
   /// Coarse-grained device family. Useful for UI and capability gating.
   final DeviceKind kind;
 
+  /// Current BLE link state as reported by the SDK
+  /// (`connected` / `connecting` / `disconnected`), or null when the
+  /// platform did not include it. A device must be `connected` before a
+  /// session can start.
+  final String? linkState;
+
   @override
-  String toString() => 'DeviceInfo(uuid: $uuid, name: $name, kind: $kind)';
+  String toString() =>
+      'DeviceInfo(uuid: $uuid, name: $name, kind: $kind, link: $linkState)';
 }
 
 /// Coarse-grained Meta wearable family.
