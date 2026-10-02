@@ -1,220 +1,219 @@
-// Android Mock Device Kit bridge.
+// Mock Device Kit bridge (DAT 1.0 mwdat-mockdevice).
 //
-// Wraps `MockDeviceKit.getInstance(context)` and exposes its surface to
-// the Dart facade. Paired devices are sourced from `kit.pairedDevices`
-// on demand and keyed by `device.deviceIdentifier.toString()`, so the
-// kit remains the single source of truth — disable/enable cycles can't
-// leave stale dictionary entries behind.
-//
-// Mock devices ship from `mwdat-mockdevice` and are intended for
-// hardware-less development. Production builds that do not want mock
-// device code in the binary should strip the dependency from
-// `build.gradle` instead — the plugin returns `MOCK_ERROR` cleanly when
-// the kit is not linked.
+// Simulates glasses so host apps can develop and test without hardware.
+// Mock devices appear in `devices` only after powerOn() + unfold().
+// Camera feed files must be H.265; the phone-camera feed needs the host's
+// runtime CAMERA permission.
 
 package com.iseelabs.meta_wearables_dat_flutter
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
+import com.meta.wearable.dat.core.Wearables
+import com.meta.wearable.dat.core.types.ChargingState
+import com.meta.wearable.dat.core.types.DeviceIdentifier
+import com.meta.wearable.dat.core.types.Permission
+import com.meta.wearable.dat.core.types.PermissionStatus
+import com.meta.wearable.dat.core.types.ThermalLevel
 import com.meta.wearable.dat.mockdevice.MockDeviceKit
-import com.meta.wearable.dat.mockdevice.api.MockRaybanMeta
+import com.meta.wearable.dat.mockdevice.api.GlassesModel
+import com.meta.wearable.dat.mockdevice.api.MockDeviceKitConfig
+import com.meta.wearable.dat.mockdevice.api.MockDeviceKitInterface
+import com.meta.wearable.dat.mockdevice.api.MockGlasses
 import com.meta.wearable.dat.mockdevice.api.camera.CameraFacing
-import io.flutter.plugin.common.EventChannel
+import java.io.File
 
-internal class MetaMockDeviceManager(context: Context) {
+class MetaMockDeviceManager(context: Context, private val experimental: ExperimentalCapabilities) {
+    private val kit: MockDeviceKitInterface = MockDeviceKit.getInstance(context)
+    private var config = MockDeviceKitConfig()
+    private val models = mutableMapOf<String, GlassesModel>()
 
-    private companion object {
-        private const val TAG = "MWDATMockDevice"
+    val devicesSink = EventSinkHandler().apply {
+        onSinkChange = { sink -> sink?.success(pairedDevices()) }
     }
 
-    // SDK 0.6.x: `MockDeviceKit.getInstance(...)` returns `MockDeviceKitInterface`,
-    // not `MockDeviceKit` itself. Letting Kotlin infer the type keeps the field
-    // compatible across any future repackaging of the implementation class.
-    private val kit = MockDeviceKit.getInstance(context.applicationContext)
+    val isEnabled: Boolean get() = kit.isEnabled
 
-    private var sink: EventChannel.EventSink? = null
-
-    /**
-     * Tracks whether `kit.enable()` has been called by this plugin.
-     * `MockDeviceKit.isEnabled` is not exposed on the Android SDK 0.6.x
-     * Kotlin API, so we mirror it here.
-     */
-    private var enabled: Boolean = false
-
-    fun setMockDevicesSink(sink: EventChannel.EventSink?) {
-        this.sink = sink
-        emitDevices()
-    }
-
-    // --- Lifecycle ------------------------------------------------------
-
-    /**
-     * Enables (or re-enables) MockDeviceKit. The
-     * `initiallyRegistered` / `initialPermissionsGranted` overrides are
-     * currently unsupported on the Android SDK; this method logs a
-     * structured warning when either is non-default but still enables
-     * the kit so test harnesses don't crash.
-     */
     fun enable(initiallyRegistered: Boolean, initialPermissionsGranted: Boolean) {
-        if (!initiallyRegistered || !initialPermissionsGranted) {
-            Log.w(
-                TAG,
-                "enableMockDevice: initiallyRegistered/" +
-                    "initialPermissionsGranted overrides are not yet " +
-                    "supported on Android; enabling MockDeviceKit with " +
-                    "default settings.",
-            )
-        }
-        if (enabled) {
-            kit.disable()
-            enabled = false
-        }
-        kit.enable()
-        enabled = true
-        emitDevices()
+        config = MockDeviceKitConfig(initiallyRegistered, initialPermissionsGranted)
+        if (kit.isEnabled) kit.disable()
+        kit.enable(config)
+        models.clear()
+        syncLedger()
+        emit()
     }
 
     fun disable() {
-        if (enabled) {
-            kit.disable()
-            enabled = false
-        }
-        emitDevices()
+        if (kit.isEnabled) kit.disable()
+        models.clear()
+        syncLedger()
+        emit()
     }
 
-    fun isEnabled(): Boolean = enabled
-
-    // --- Pairing --------------------------------------------------------
-
-    fun pairRayBanMeta(): String {
-        ensureEnabled()
-        val mock = kit.pairRaybanMeta()
-        emitDevices()
-        return mock.deviceIdentifier.toString()
+    fun pair(modelName: String?): Map<String, Any?> {
+        val model = WireCodec.parse<GlassesModel>(
+            modelName ?: "rayBanMeta",
+            "rayBanMeta" to GlassesModel.RAYBAN_META,
+            "rayBanMetaOptics" to GlassesModel.RAYBAN_META_OPTICS,
+            "metaRayBanDisplay" to GlassesModel.META_RAYBAN_DISPLAY,
+            "oakleyMetaHSTN" to GlassesModel.OAKLEY_META_HSTN,
+            "oakleyMetaHstn" to GlassesModel.OAKLEY_META_HSTN,
+        ) ?: throw WireError.invalidArgument("Unknown glasses model '$modelName'.")
+        if (!kit.isEnabled) kit.enable(config)
+        val result = kit.pairGlasses(model)
+        val glasses = result.getOrNull() ?: throw WireCodec.from(result.errorOrNull(), WireCategory.MOCK)
+        models[glasses.deviceIdentifier.identifier] = model
+        syncLedger()
+        emit()
+        return encode(glasses)
     }
 
     fun unpair(uuid: String) {
-        val mock = requireDevice(uuid)
-        kit.unpairDevice(mock)
-        emitDevices()
+        kit.unpairDevice(glasses(uuid))
+        models.remove(uuid)
+        syncLedger()
+        emit()
     }
 
-    /** Returns a serialisable snapshot of every paired mock device. */
     fun pairedDevices(): List<Map<String, Any?>> =
-        kit.pairedDevices.map(::encodeDevice)
+        if (kit.isEnabled) kit.pairedDevices.filterIsInstance<MockGlasses>().map { encode(it) } else emptyList()
 
-    // --- Device control -------------------------------------------------
-
-    fun powerOn(uuid: String) {
-        requireDevice(uuid).powerOn()
-    }
-
-    fun powerOff(uuid: String) {
-        requireDevice(uuid).powerOff()
-    }
-
-    fun don(uuid: String) {
-        requireDevice(uuid).don()
-    }
-
-    fun doff(uuid: String) {
-        requireDevice(uuid).doff()
-    }
-
-    fun fold(uuid: String) {
-        requireDevice(uuid).fold()
-    }
-
-    fun unfold(uuid: String) {
-        requireDevice(uuid).unfold()
-    }
-
-    // --- Permissions (kit-level) ----------------------------------------
-
-    /**
-     * The Android `MockDeviceKit` 0.6.x surface does not expose a
-     * programmatic permission-injection hook analogous to iOS's
-     * `MockDeviceKit.shared.permissions`. We retain the method for API
-     * parity with iOS so the Dart facade has a uniform shape, but emit
-     * a structured warning that is no-op'd until Meta lights up the
-     * Kotlin equivalent.
-     */
-    @Suppress("UNUSED_PARAMETER")
-    fun setPermission(permission: String, status: String) {
-        Log.w(
-            TAG,
-            "setMockPermission: MockPermissions API is not yet exposed " +
-                "on Android (permission=$permission status=$status). " +
-                "Treating call as no-op.",
-        )
-    }
-
-    @Suppress("UNUSED_PARAMETER")
-    fun setPermissionRequestResult(permission: String, status: String) {
-        Log.w(
-            TAG,
-            "setMockPermissionRequestResult: MockPermissions API is not " +
-                "yet exposed on Android (permission=$permission " +
-                "status=$status). Treating call as no-op.",
-        )
-    }
-
-    // --- Camera ---------------------------------------------------------
-
-    fun setCameraFacing(uuid: String, facing: String) {
-        // SDK 0.6.x: the enum value is `BACK` (not `REAR`).
-        val mapped = when (facing.lowercase()) {
-            "front" -> CameraFacing.FRONT
-            else -> CameraFacing.BACK
+    fun perform(action: String, uuid: String) {
+        val g = glasses(uuid)
+        when (action) {
+            "mockPowerOn" -> g.powerOn()
+            "mockPowerOff" -> g.powerOff()
+            "mockDon" -> g.don()
+            "mockDoff" -> g.doff()
+            "mockFold" -> g.fold()
+            "mockUnfold" -> g.unfold()
+            "mockCaptouchTap" -> g.services.captouch.tap()
+            "mockCaptouchTapAndHold" -> g.services.captouch.tapAndHold()
+            else -> throw WireError.invalidArgument("Unknown mock action $action.")
         }
-        requireDevice(uuid).services.camera.setCameraFeed(mapped)
+        emit()
     }
 
-    fun setCameraFeed(uuid: String, filePath: String?) {
-        val device = requireDevice(uuid)
-        if (filePath.isNullOrEmpty()) return
-        device.services.camera.setCameraFeed(Uri.parse("file://$filePath"))
+    fun setBatteryLevel(uuid: String, level: Int?) {
+        if (level != null && level !in 0..100) {
+            throw WireError.invalidArgument("Battery level must be between 0 and 100 (got $level).")
+        }
+        // Android uses 0 for "unknown".
+        glasses(uuid).setBatteryLevel(level ?: 0)
     }
 
-    fun setCapturedImage(uuid: String, filePath: String?) {
-        val device = requireDevice(uuid)
-        if (filePath.isNullOrEmpty()) return
-        device.services.camera.setCapturedImage(Uri.parse("file://$filePath"))
+    fun setChargingState(uuid: String, raw: String?) {
+        val state = WireCodec.parse<ChargingState>(raw)
+            ?: throw WireError.invalidArgument("Unknown charging state '$raw'.")
+        glasses(uuid).setChargingState(state)
     }
 
-    // --- Helpers --------------------------------------------------------
+    fun setThermalLevel(uuid: String, raw: String?) {
+        val level = WireCodec.parse<ThermalLevel>(raw)
+            ?: throw WireError.invalidArgument("Unknown thermal level '$raw'.")
+        glasses(uuid).setThermalLevel(level)
+    }
 
-    private fun ensureEnabled() {
-        if (!enabled) {
-            kit.enable()
-            enabled = true
+    fun setPermission(permission: String?, status: String?, requestResult: Boolean) {
+        val perm = WireCodec.parse<Permission>(permission)
+            ?: throw WireError.invalidArgument("Unknown permission '$permission'.")
+        val st = when (status) {
+            "granted" -> PermissionStatus.Granted
+            "denied" -> PermissionStatus.Denied
+            else -> throw WireError.invalidArgument("Unknown permission status '$status'.")
+        }
+        if (!kit.isEnabled) kit.enable(config)
+        if (requestResult) kit.permissions.setRequestResult(perm, st) else kit.permissions.set(perm, st)
+    }
+
+    fun setCameraFacing(uuid: String, facing: String?) {
+        glasses(uuid).services.camera.setCameraFeed(if (facing == "front") CameraFacing.FRONT else CameraFacing.BACK)
+    }
+
+    fun setCameraFeed(uuid: String, path: String?) = glasses(uuid).services.camera.setCameraFeed(uri(path))
+
+    fun setCapturedImage(uuid: String, path: String?) = glasses(uuid).services.camera.setCapturedImage(uri(path))
+
+    fun setCapturedPhoto(uuid: String, path: String?) =
+        glasses(uuid).services.cameraCapture.setCapturedPhoto(uri(path))
+
+    fun simulateCaptureFailure(uuid: String) = glasses(uuid).services.cameraCapture.simulateCaptureFailure()
+
+    fun input(uuid: String, args: Map<*, *>) = experimental.mockInput(glasses(uuid), args)
+
+    fun speech(uuid: String, args: Map<*, *>) {
+        val speech = glasses(uuid).services.speech
+        when (args["action"]) {
+            "source" -> speech.setTranscriptionSource(
+                if (args["source"] == "liveDeviceAsr") {
+                    com.meta.wearable.dat.mockdevice.api.speech.MockSpeechSource.LIVE_DEVICE_ASR
+                } else {
+                    com.meta.wearable.dat.mockdevice.api.speech.MockSpeechSource.INJECTED
+                },
+            )
+            "transcription" -> speech.simulateTranscription(
+                args["text"] as? String ?: "",
+                args["isFinal"] as? Boolean ?: true,
+                (args["confidence"] as? Number)?.toFloat() ?: 1f,
+            )
+            "error" -> speech.simulateError((args["errorCode"] as? Number)?.toInt() ?: 0, args["message"] as? String ?: "")
+            "completion" -> speech.simulateCompletion()
+            "locale" -> speech.setLocale(args["locale"] as? String ?: "en-US")
+            else -> throw WireError.invalidArgument("Unknown speech action '${args["action"]}'.")
         }
     }
 
-    private fun requireDevice(uuid: String): MockRaybanMeta {
-        val device = kit.pairedDevices.find {
-            it.deviceIdentifier.toString() == uuid
-        } ?: error("Mock device not found: $uuid")
-        if (device !is MockRaybanMeta) {
-            error("Mock device $uuid is not a Ray-Ban Meta")
-        }
-        return device
+    fun setMotionFeed(uuid: String, args: Map<*, *>) = experimental.mockMotionFeed(glasses(uuid), args, ::uri)
+
+    fun voice(uuid: String, incomplete: Boolean): String? {
+        val voice = glasses(uuid).services.voiceInvocation
+        return if (incomplete) voice.simulateIncompleteAction() else voice.simulateLaunchAppAction()
     }
 
-    private fun emitDevices() {
-        sink?.success(pairedDevices())
+    fun sendDisplayClick(uuid: String, identifier: String): Boolean =
+        glasses(uuid).services.display.sendClick(identifier)
+
+    fun startTestServer(port: Int): Int {
+        if (!kit.isEnabled) kit.enable(config)
+        val result = kit.startTestServer(port)
+        return result.getOrNull() ?: throw WireCodec.from(result.errorOrNull(), WireCategory.MOCK)
     }
 
-    private fun encodeDevice(device: Any): Map<String, Any?> {
-        val id = when (device) {
-            is MockRaybanMeta -> device.deviceIdentifier.toString()
-            else -> device.toString()
+    fun stopTestServer() = kit.stopTestServer()
+
+    // --- Helpers -------------------------------------------------------------------
+
+    private fun glasses(uuid: String): MockGlasses {
+        if (!kit.isEnabled) {
+            throw WireError(WireCategory.MOCK, "notEnabled", "Mock Device Kit is not enabled.")
         }
-        return mapOf(
-            "uuid" to id,
-            "name" to "Mock Ray-Ban Meta",
-            "kind" to "rayBanMeta",
-        )
+        val device = kit.pairedDevices.firstOrNull { it.deviceIdentifier.identifier == uuid }
+            ?: throw WireError(WireCategory.MOCK, "deviceNotFound", "No paired mock device $uuid.")
+        return device as? MockGlasses
+            ?: throw WireError(WireCategory.MOCK, "wrongDeviceKind", "Mock device $uuid is not a pair of glasses.")
     }
+
+    private fun uri(path: String?): Uri {
+        if (path.isNullOrEmpty()) throw WireError.invalidArgument("filePath is required.")
+        val file = File(path)
+        if (!file.exists()) throw WireError.invalidArgument("File not found: $path")
+        return Uri.fromFile(file)
+    }
+
+    private fun encode(glasses: MockGlasses): Map<String, Any?> {
+        val id = glasses.deviceIdentifier.identifier
+        val metadata = Wearables.devicesMetadata[DeviceIdentifier(id)]?.value
+        val map = WireCodec.device(id, metadata).toMutableMap()
+        models[id]?.let { model ->
+            map["model"] = WireCodec.canonical(model)
+            if (map["deviceType"] == "unknown") map["deviceType"] = WireCodec.canonical(model)
+        }
+        map["isMock"] = true
+        return map
+    }
+
+    private fun emit() = devicesSink.send(pairedDevices())
+
+    private fun syncLedger() =
+        ResourceLedger.set(ResourceLedger.Kind.MOCK_DEVICES, if (kit.isEnabled) kit.pairedDevices.size else 0)
 }

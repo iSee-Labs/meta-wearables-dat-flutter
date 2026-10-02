@@ -1,44 +1,28 @@
-/// Compatibility state reported by Meta's SDK for a paired device.
-///
-/// Mirrors `MWDATCore.Compatibility` on iOS and
-/// `com.meta.wearable.dat.core.types.DeviceCompatibility` on Android.
+/// Version compatibility between this app's DAT SDK and the glasses.
 enum DeviceCompatibility {
-  /// Device and SDK versions are compatible; streaming should work.
+  /// Compatible.
   compatible,
 
-  /// The glasses firmware needs to be updated before the SDK can talk
-  /// to the device. Surface this to the user with instructions to open
-  /// Meta AI / the companion app.
+  /// The glasses firmware must be updated
+  /// (`MetaWearablesDat.openFirmwareUpdate`).
   deviceUpdateRequired,
 
-  /// The host app embeds an older `MWDAT*` SDK than the firmware
-  /// expects. Surface this as "please update the app".
+  /// This app must be rebuilt with a newer SDK.
   sdkUpdateRequired,
 
-  /// SDK has not yet reported a compatibility verdict for this device,
-  /// or the SDK doesn't know how to classify it.
+  /// Not reported yet.
   unknown;
 
-  /// Maps a wire string (`compatible`, `deviceUpdateRequired`,
-  /// `sdkUpdateRequired`, `unknown`, `undefined`) to a [DeviceCompatibility].
+  /// Parses the wire name; unknown values map to [unknown].
   static DeviceCompatibility fromRaw(String? raw) {
-    switch (raw) {
-      case 'compatible':
-        return DeviceCompatibility.compatible;
-      case 'deviceUpdateRequired':
-        return DeviceCompatibility.deviceUpdateRequired;
-      case 'sdkUpdateRequired':
-        return DeviceCompatibility.sdkUpdateRequired;
-      case _:
-        return DeviceCompatibility.unknown;
+    for (final value in values) {
+      if (value.name == raw) return value;
     }
+    return unknown;
   }
 }
 
-/// One `compatibility` event from the native side.
-///
-/// Emitted by `MetaWearablesDat.compatibilityStream()` whenever the SDK
-/// recomputes its verdict for a paired device.
+/// A compatibility verdict for one device.
 class DeviceCompatibilityEvent {
   /// Creates a [DeviceCompatibilityEvent].
   const DeviceCompatibilityEvent({
@@ -46,7 +30,7 @@ class DeviceCompatibilityEvent {
     required this.compatibility,
   });
 
-  /// Parses a platform-channel map into a [DeviceCompatibilityEvent].
+  /// Decodes a platform-channel map.
   factory DeviceCompatibilityEvent.fromMap(Map<Object?, Object?> map) {
     return DeviceCompatibilityEvent(
       deviceUuid: map['deviceUuid'] as String? ?? '',
@@ -56,13 +40,13 @@ class DeviceCompatibilityEvent {
     );
   }
 
-  /// The device this event refers to. Matches `DeviceInfo.uuid`.
+  /// The device the verdict is for.
   final String deviceUuid;
 
-  /// The current compatibility state.
+  /// The verdict.
   final DeviceCompatibility compatibility;
 
   @override
-  String toString() => 'DeviceCompatibilityEvent(deviceUuid: $deviceUuid, '
-      'compatibility: $compatibility)';
+  String toString() =>
+      'DeviceCompatibilityEvent(deviceUuid: $deviceUuid, compatibility: ${compatibility.name})';
 }

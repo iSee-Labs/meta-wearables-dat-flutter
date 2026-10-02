@@ -1,24 +1,38 @@
-/// `meta_wearables_dat_flutter` is an unofficial Flutter plugin bridging
-/// Meta's official iOS and Android Wearables Device Access Toolkit (DAT)
-/// SDKs. It is not affiliated with Meta Platforms, Inc.
+/// Unofficial Flutter plugin for Meta's Wearables Device Access Toolkit
+/// (DAT) 1.0 on iOS and Android. Not affiliated with Meta Platforms, Inc.
 ///
-/// Public entry point: [MetaWearablesDat]. All methods on the facade are
-/// static; lifecycle is managed by the plugin internally and shared across
-/// the entire Flutter engine.
+/// Entry point: [MetaWearablesDat]. Experimental DAT capabilities (Inputs,
+/// Motion, Speech, voice invocations, high-resolution photos and in-stream
+/// audio) are marked `@experimental`: apps that use them can be built and
+/// tested in Developer Mode and Beta release channels, but cannot ship to
+/// production release channels.
 library;
 
+import 'dart:async';
+import 'dart:ui' as ui;
+
+import 'package:meta/meta.dart';
 import 'package:meta_wearables_dat_flutter/src/meta_wearables_dat_platform_interface.dart';
 import 'package:meta_wearables_dat_flutter/src/models/background_notification.dart';
 import 'package:meta_wearables_dat_flutter/src/models/camera_facing.dart';
+import 'package:meta_wearables_dat_flutter/src/models/dat_error.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_compatibility.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_info.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_session_state.dart';
+import 'package:meta_wearables_dat_flutter/src/models/diagnostics.dart';
 import 'package:meta_wearables_dat_flutter/src/models/display/display_components.dart';
 import 'package:meta_wearables_dat_flutter/src/models/display/display_state.dart';
+import 'package:meta_wearables_dat_flutter/src/models/experimental/inputs.dart';
+import 'package:meta_wearables_dat_flutter/src/models/experimental/motion.dart';
+import 'package:meta_wearables_dat_flutter/src/models/experimental/speech.dart';
+import 'package:meta_wearables_dat_flutter/src/models/experimental/voice.dart';
 import 'package:meta_wearables_dat_flutter/src/models/frame_data.dart';
-import 'package:meta_wearables_dat_flutter/src/models/mock_permission.dart';
+import 'package:meta_wearables_dat_flutter/src/models/high_res_photo.dart';
+import 'package:meta_wearables_dat_flutter/src/models/mock.dart';
+import 'package:meta_wearables_dat_flutter/src/models/permission.dart';
 import 'package:meta_wearables_dat_flutter/src/models/photo_result.dart';
 import 'package:meta_wearables_dat_flutter/src/models/registration_state.dart';
+import 'package:meta_wearables_dat_flutter/src/models/stream_config.dart';
 import 'package:meta_wearables_dat_flutter/src/models/stream_quality.dart';
 import 'package:meta_wearables_dat_flutter/src/models/stream_session_state.dart';
 import 'package:meta_wearables_dat_flutter/src/models/video_frame.dart';
@@ -30,483 +44,754 @@ export 'package:meta_wearables_dat_flutter/src/models/dat_error.dart';
 export 'package:meta_wearables_dat_flutter/src/models/device_compatibility.dart';
 export 'package:meta_wearables_dat_flutter/src/models/device_info.dart';
 export 'package:meta_wearables_dat_flutter/src/models/device_session_state.dart';
+export 'package:meta_wearables_dat_flutter/src/models/diagnostics.dart';
 export 'package:meta_wearables_dat_flutter/src/models/display/display_components.dart';
+export 'package:meta_wearables_dat_flutter/src/models/display/display_icon_name.dart';
 export 'package:meta_wearables_dat_flutter/src/models/display/display_playback_event.dart';
 export 'package:meta_wearables_dat_flutter/src/models/display/display_state.dart';
+export 'package:meta_wearables_dat_flutter/src/models/experimental/inputs.dart';
+export 'package:meta_wearables_dat_flutter/src/models/experimental/motion.dart';
+export 'package:meta_wearables_dat_flutter/src/models/experimental/speech.dart';
+export 'package:meta_wearables_dat_flutter/src/models/experimental/voice.dart';
 export 'package:meta_wearables_dat_flutter/src/models/frame_data.dart';
+export 'package:meta_wearables_dat_flutter/src/models/high_res_photo.dart';
+export 'package:meta_wearables_dat_flutter/src/models/mock.dart';
+// ignore: deprecated_member_use_from_same_package
 export 'package:meta_wearables_dat_flutter/src/models/mock_permission.dart';
+export 'package:meta_wearables_dat_flutter/src/models/permission.dart';
 export 'package:meta_wearables_dat_flutter/src/models/photo_result.dart';
 export 'package:meta_wearables_dat_flutter/src/models/registration_state.dart';
-// ignore: deprecated_member_use_from_same_package
-export 'package:meta_wearables_dat_flutter/src/models/session_state.dart';
+export 'package:meta_wearables_dat_flutter/src/models/stream_config.dart';
 export 'package:meta_wearables_dat_flutter/src/models/stream_quality.dart';
 export 'package:meta_wearables_dat_flutter/src/models/stream_session_state.dart';
 export 'package:meta_wearables_dat_flutter/src/models/video_frame.dart';
 export 'package:meta_wearables_dat_flutter/src/models/video_stream_size.dart';
 
-/// Static facade for the entire plugin.
+/// Static facade for the plugin.
 ///
-/// **Lifecycle order** (see `doc/getting_started.md`):
+/// Typical order (see `doc/getting_started.md`):
 ///
-/// 1. [requestAndroidPermissions] (Android only; safe no-op on iOS).
-/// 2. [startRegistration] + [handleUrl] (host app forwards inbound deep
-///    links to [handleUrl]).
-/// 3. [requestCameraPermission] (Meta AI bottom sheet).
-/// 4. [startStreamSession] returns a Flutter texture id; render with
-///    `Texture(textureId: id)`.
+/// 1. [requestAndroidPermissions] (Android; returns `true` on iOS).
+/// 2. [startRegistration] once; watch [registrationStateStream].
+/// 3. [requestPermission] for [Permission.camera].
+/// 4. [startStreamSession] returns a texture id for `Texture(textureId:)`.
 /// 5. [stopStreamSession] when done.
+///
+/// Every failure is a [DatError] subclass. Camera, display and the
+/// experimental capabilities share one device session, which stays open
+/// while any of them runs.
 abstract final class MetaWearablesDat {
-  // --- Diagnostics ----------------------------------------------------------
+  static MetaWearablesDatPlatform get _p => MetaWearablesDatPlatform.instance;
 
-  /// Returns a short string identifying the host platform.
-  static Future<String?> getPlatformVersion() {
-    return MetaWearablesDatPlatform.instance.getPlatformVersion();
-  }
+  // --- Platform & diagnostics -----------------------------------------------------
 
-  /// Returns a structured snapshot of everything Meta's SDK validates at
-  /// `startRegistration` time on the host platform.
-  static Future<Map<String, Object?>> dumpDiagnostics() {
-    return MetaWearablesDatPlatform.instance.dumpDiagnostics();
-  }
+  /// The host OS name and version.
+  static Future<String?> getPlatformVersion() => _p.getPlatformVersion();
 
-  // --- Permissions ----------------------------------------------------------
-
-  /// Requests the Android runtime permissions Meta's SDK requires
-  /// (`BLUETOOTH_CONNECT` and `INTERNET`).
+  /// Configuration problems, versions, devices and held resources.
   ///
-  /// Returns `true` if every required permission ends up granted, `false`
-  /// otherwise. On iOS this method is a documented no-op and always
-  /// resolves to `true` immediately.
-  static Future<bool> requestAndroidPermissions() {
-    return MetaWearablesDatPlatform.instance.requestAndroidPermissions();
-  }
+  /// Check [DatDiagnostics.errors] during development: they list missing
+  /// Info.plist keys, manifest entries and permissions.
+  static Future<DatDiagnostics> dumpDiagnostics() => _p.dumpDiagnostics();
 
-  /// Requests the wearable-side camera permission by deep-linking into
-  /// the Meta AI app and showing its standard permission bottom sheet.
+  /// Android: requests `BLUETOOTH_CONNECT` and initialises the DAT SDK.
+  /// Returns `true` when granted. iOS: returns `true`.
   ///
-  /// Throws [PermissionError] when the request cannot be initiated.
-  static Future<bool> requestCameraPermission() {
-    return MetaWearablesDatPlatform.instance.requestCameraPermission();
-  }
+  /// Android initialises the SDK automatically at launch once the
+  /// permission was granted before, so this is only needed until then.
+  static Future<bool> requestAndroidPermissions() =>
+      _p.requestAndroidPermissions();
 
-  /// Returns the current wearable-side camera permission status without
-  /// triggering the Meta AI bottom sheet.
-  static Future<bool> getCameraPermissionStatus() {
-    return MetaWearablesDatPlatform.instance.getCameraPermissionStatus();
-  }
+  // --- Registration ------------------------------------------------------------------
 
-  // --- Registration ---------------------------------------------------------
-
-  /// Starts the device registration flow.
+  /// Opens the Meta AI app to register this app. The result arrives on
+  /// [registrationStateStream] (and errors on [registrationErrorStream]).
   ///
-  /// Both [appId] and [urlScheme] are vestigial: every value the SDK
-  /// needs is read from the host app's `Info.plist` (`MWDAT` dict) on
-  /// iOS and `AndroidManifest.xml` `<meta-data>` on Android. Passing
-  /// them here has **no effect** on either platform and they will be
-  /// removed in v0.2.0.
+  /// Throws a [RegistrationError].
+  static Future<void> startRegistration() => _p.startRegistration();
+
+  /// Unregisters this app. Stops any running session first.
   ///
-  /// Throws [RegistrationError] if registration cannot be initiated.
-  static Future<void> startRegistration({
-    @Deprecated(
-      'Vestigial parameter. The iOS SDK reads MetaAppID from '
-      'Info.plist.MWDAT and the Android SDK reads APPLICATION_ID from '
-      '<meta-data>. Will be removed in v0.2.0.',
-    )
-    String? appId,
-    @Deprecated(
-      'Vestigial parameter. The iOS SDK reads AppLinkURLScheme from '
-      'Info.plist.MWDAT (and that value must end with "://", because '
-      'Meta AI literally concatenates it with the callback query '
-      'string). Android reads the scheme from the activity '
-      '<intent-filter>. Will be removed in v0.2.0.',
-    )
-    String? urlScheme,
-  }) {
-    return MetaWearablesDatPlatform.instance.startRegistration(
-      appId: appId,
-      urlScheme: urlScheme,
-    );
-  }
+  /// Throws an [UnregistrationError].
+  static Future<void> startUnregistration() => _p.startUnregistration();
 
-  /// Forwards an inbound deep-link URL to the SDK.
+  /// Forwards a callback URL to the SDK. The plugin already forwards Meta
+  /// AI callbacks automatically (iOS app delegate, Android intents); call
+  /// this only for URLs your app receives another way. Returns whether the
+  /// SDK consumed it.
+  static Future<bool> handleUrl(String url) => _p.handleUrl(url);
+
+  /// The current registration state.
+  static Future<RegistrationState> getRegistrationState() =>
+      _p.getRegistrationState();
+
+  /// Registration state changes; emits the current state first.
+  static Stream<RegistrationState> registrationStateStream() =>
+      _p.registrationStateStream();
+
+  /// Registration and unregistration failures reported asynchronously.
+  static Stream<DatError> registrationErrorStream() =>
+      _p.registrationErrorStream();
+
+  /// Registrations started from the Meta AI app (DAT 1.0). Answer each with
+  /// [RegistrationRequest.continueRegistration] or [RegistrationRequest.cancel].
+  static Stream<RegistrationRequest> registrationRequestStream() =>
+      _p.registrationRequestStream();
+
+  // --- Permissions & Meta AI navigation ---------------------------------------------
+
+  /// Asks the user (in the Meta AI app) to grant [permission].
   ///
-  /// Throws [HandleUrlError] if the URL was not a registration callback.
-  static Future<bool> handleUrl(String url) {
-    return MetaWearablesDatPlatform.instance.handleUrl(url);
+  /// Android requires `MainActivity` to extend `FlutterFragmentActivity`.
+  /// Throws a [PermissionError].
+  static Future<PermissionStatus> requestPermission(Permission permission) =>
+      _p.requestPermission(permission);
+
+  /// The current status of [permission], without prompting.
+  static Future<PermissionStatus> checkPermissionStatus(
+    Permission permission,
+  ) => _p.checkPermissionStatus(permission);
+
+  /// Requests the camera permission. Returns whether it was granted.
+  @Deprecated('Use requestPermission(Permission.camera)')
+  static Future<bool> requestCameraPermission() async =>
+      (await requestPermission(Permission.camera)).isGranted;
+
+  /// Whether the camera permission is granted.
+  @Deprecated('Use checkPermissionStatus(Permission.camera)')
+  static Future<bool> getCameraPermissionStatus() async =>
+      (await checkPermissionStatus(Permission.camera)).isGranted;
+
+  /// Opens the Meta AI app's firmware update screen, for
+  /// [DeviceCompatibility.deviceUpdateRequired]. Throws a [NavigationError].
+  static Future<void> openFirmwareUpdate() => _p.openFirmwareUpdate();
+
+  /// Opens the Meta AI app to update the DAT app on the glasses, for
+  /// [DeviceSessionErrorCase.datAppOnTheGlassesUpdateRequired]. Throws a
+  /// [NavigationError].
+  static Future<void> openDatGlassesAppUpdate() => _p.openDatGlassesAppUpdate();
+
+  // --- Devices ---------------------------------------------------------------------------
+
+  /// Every paired device with its current state.
+  static Future<List<DeviceInfo>> getDevices() => _p.getDevices();
+
+  /// One paired device, or `null` when it is not paired.
+  static Future<DeviceInfo?> getDevice(String deviceUuid) =>
+      _p.getDevice(deviceUuid);
+
+  /// The device of the open session, or `null` when no session is open.
+  static Future<DeviceInfo?> getSessionDevice() => _p.getSessionDevice();
+
+  /// Paired devices; emits the full list on every change, including state
+  /// changes such as battery or wear.
+  static Stream<List<DeviceInfo>> devicesStream() => _p.devicesStream();
+
+  /// Live state (battery, charging, wear, hinge, thermal, link) of
+  /// [deviceUuid]. Emits the current snapshot first.
+  static Stream<DeviceInfo> deviceStateStream(String deviceUuid) async* {
+    final controller = StreamController<DeviceInfo>();
+    final sub = _p
+        .deviceStateChanges()
+        .where((d) => d.uuid == deviceUuid)
+        .listen(controller.add, onError: controller.addError);
+    try {
+      final current = await _p.getDevice(deviceUuid);
+      if (current != null) yield current;
+      yield* controller.stream;
+    } finally {
+      await sub.cancel();
+      await controller.close();
+    }
   }
 
-  /// Starts an unregistration flow for the currently registered device.
+  /// The device the SDK would pick automatically, or `null`.
+  static Stream<DeviceInfo?> activeDeviceStream() => _p.activeDeviceStream();
+
+  /// Compatibility verdicts per device.
+  static Stream<DeviceCompatibilityEvent> compatibilityStream() =>
+      _p.compatibilityStream();
+
+  /// State of the shared device session.
+  static Stream<DeviceSessionState> deviceSessionStateStream() =>
+      _p.deviceSessionStateStream();
+
+  /// Device session errors. Check [DeviceSessionError.isTerminal],
+  /// [DeviceSessionError.isWarning] and [DatError.recoveryAction].
+  static Stream<DeviceSessionError> deviceSessionErrorStream() =>
+      _p.deviceSessionErrorStream();
+
+  // --- Camera ---------------------------------------------------------------------------
+
+  /// Starts the camera and returns a Flutter texture id for
+  /// `Texture(textureId: id)`.
   ///
-  /// Throws [UnregistrationError] if it cannot be initiated.
-  static Future<void> startUnregistration() {
-    return MetaWearablesDatPlatform.instance.startUnregistration();
-  }
-
-  /// Returns the current [RegistrationState].
-  static Future<RegistrationState> getRegistrationState() {
-    return MetaWearablesDatPlatform.instance.getRegistrationState();
-  }
-
-  /// Broadcast stream of [RegistrationState] changes.
-  static Stream<RegistrationState> registrationStateStream() {
-    return MetaWearablesDatPlatform.instance.registrationStateStream();
-  }
-
-  /// Broadcast stream of the currently active device, or `null` when no
-  /// device is paired or the registered device disconnects.
-  static Stream<DeviceInfo?> activeDeviceStream() {
-    return MetaWearablesDatPlatform.instance.activeDeviceStream();
-  }
-
-  /// Broadcast stream of every paired device (active or not). Mirrors
-  /// `Wearables.shared.devicesStream()` on iOS and the equivalent
-  /// `Wearables.devices` flow on Android.
-  static Stream<List<DeviceInfo>> devicesStream() {
-    return MetaWearablesDatPlatform.instance.devicesStream();
-  }
-
-  /// One-shot snapshot of every paired device known to the SDK.
-  static Future<List<DeviceInfo>> getDevices() {
-    return MetaWearablesDatPlatform.instance.getDevices();
-  }
-
-  /// Broadcast stream of per-device compatibility verdicts (e.g. "your
-  /// glasses firmware needs an update"). Mirrors iOS
-  /// `Device.addCompatibilityListener` / Android
-  /// `Wearables.devicesMetadata[id].compatibility`.
-  static Stream<DeviceCompatibilityEvent> compatibilityStream() {
-    return MetaWearablesDatPlatform.instance.compatibilityStream();
-  }
-
-  // --- Streaming ------------------------------------------------------------
-
-  /// Starts a video stream from the active wearable and returns a Flutter
-  /// `textureId` you can render with `Texture(textureId: id)`.
-  ///
-  /// When [deviceKinds] is set, only devices whose `kind` is in the set
-  /// are considered by the underlying `AutoDeviceSelector` filter (or
-  /// equivalent enumeration on iOS). Pass `null` to accept any kind.
-  ///
-  /// [videoCodec] picks the codec used for [videoFramesStream] payloads
-  /// (see [VideoCodec]). The texture preview path always sees raw frames
-  /// regardless of this setting on iOS; on Android the texture preview is
-  /// disabled when [VideoCodec.hvc1] is selected (see `doc/streaming.md`).
-  ///
-  /// Throws [SessionError] (or [DeviceSessionError]) if the session
-  /// cannot be started.
+  /// Pass [config] (preferred) or the individual named arguments. Picks the
+  /// best connected, worn device unless [deviceUUID] is given. Throws a
+  /// [DeviceSessionError], [StreamError] or [DatArgumentError].
   static Future<int> startStreamSession({
     String? deviceUUID,
-    int fps = 30,
-    StreamQuality quality = StreamQuality.medium,
+    StreamSessionConfig? config,
+    @Deprecated('Use config: StreamSessionConfig(frameRate: ...)') int? fps,
+    @Deprecated('Use config: StreamSessionConfig(quality: ...)')
+    StreamQuality? quality,
+    @Deprecated('Use config: StreamSessionConfig(videoCodec: ...)')
+    VideoCodec? videoCodec,
+    @Deprecated('Use config: StreamSessionConfig(deviceKinds: ...)')
     Set<DeviceKind>? deviceKinds,
-    VideoCodec videoCodec = VideoCodec.raw,
   }) {
-    return MetaWearablesDatPlatform.instance.startStreamSession(
-      deviceUUID: deviceUUID,
-      fps: fps,
-      quality: quality,
-      deviceKinds: deviceKinds,
-      videoCodec: videoCodec,
-    );
+    var effective = config ?? const StreamSessionConfig();
+    if (config == null &&
+        (fps != null ||
+            quality != null ||
+            videoCodec != null ||
+            deviceKinds != null)) {
+      final rate = fps == null
+          ? effective.frameRate
+          : StreamFrameRate.values.where((r) => r.value == fps).firstOrNull;
+      if (rate == null) {
+        throw DatArgumentError(
+          message: 'fps must be one of 2, 7, 15, 24, 30 (got $fps).',
+        );
+      }
+      effective = StreamSessionConfig(
+        frameRate: rate,
+        quality: quality ?? effective.quality,
+        videoCodec: videoCodec ?? effective.videoCodec,
+        deviceKinds: deviceKinds,
+      );
+    }
+    return _p.startStreamSession(effective, deviceUuid: deviceUUID);
   }
 
-  /// Stops the active stream session and unregisters the texture.
-  static Future<void> stopStreamSession({String? deviceUUID}) {
-    return MetaWearablesDatPlatform.instance.stopStreamSession(
-      deviceUUID: deviceUUID,
-    );
-  }
+  /// Stops the camera, releases the texture and closes the session when
+  /// nothing else uses it.
+  static Future<void> stopStreamSession() => _p.stopStreamSession();
 
-  /// Pauses the active stream session.
-  static Future<void> pauseStreamSession({String? deviceUUID}) {
-    return MetaWearablesDatPlatform.instance.pauseStreamSession(
-      deviceUUID: deviceUUID,
-    );
-  }
+  /// Camera stream state; emits the current state first.
+  static Stream<StreamSessionState> streamSessionStateStream() =>
+      _p.streamSessionStateStream();
 
-  /// Resumes a paused stream session.
-  static Future<void> resumeStreamSession({String? deviceUUID}) {
-    return MetaWearablesDatPlatform.instance.resumeStreamSession(
-      deviceUUID: deviceUUID,
-    );
-  }
+  /// Camera stream errors and warnings ([StreamError.isWarning]).
+  static Stream<StreamError> streamErrorStream() => _p.streamErrorStream();
 
-  /// Broadcast stream of [StreamSessionState] changes.
-  static Stream<StreamSessionState> streamSessionStateStream() {
-    return MetaWearablesDatPlatform.instance.streamSessionStateStream();
-  }
+  /// Former name of [streamErrorStream].
+  @Deprecated('Use streamErrorStream')
+  static Stream<Object> streamSessionErrorStream() => streamErrorStream();
 
-  /// Broadcast stream of stream-level session errors. Events are typed
-  /// [SessionError] subclasses with `is*` getters such as
-  /// `isThermalCritical` and `isHingesClosed`.
-  static Stream<Object> streamSessionErrorStream() {
-    return MetaWearablesDatPlatform.instance.streamSessionErrorStream();
-  }
+  /// State of the camera capability.
+  static Stream<CameraState> cameraStateStream() => _p.cameraStateStream();
 
-  /// Broadcast stream of [DeviceSessionState] changes — the underlying
-  /// long-lived connection to a paired wearable.
-  static Stream<DeviceSessionState> deviceSessionStateStream() {
-    return MetaWearablesDatPlatform.instance.deviceSessionStateStream();
-  }
+  /// Frame size; emits when it changes (the SDK lowers resolution under poor
+  /// bandwidth).
+  static Stream<VideoStreamSize> videoStreamSizeStream() =>
+      _p.videoStreamSizeStream();
 
-  /// Broadcast stream of [DeviceSessionError] events from the underlying
-  /// device session (separate from the stream-level errors emitted by
-  /// [streamSessionErrorStream]).
-  static Stream<Object> deviceSessionErrorStream() {
-    return MetaWearablesDatPlatform.instance.deviceSessionErrorStream();
-  }
+  /// Opt-in per-frame data. Costs a copy of every frame (up to 3.7 MB at
+  /// 720p); nothing is produced while nobody listens. See
+  /// `doc/frame_processing.md`.
+  static Stream<VideoFrame> videoFramesStream() => _p.videoFramesStream();
 
-  /// **Deprecated** — alias for [streamSessionStateStream]. Will be removed
-  /// in v0.2.0.
-  @Deprecated('Use streamSessionStateStream() instead.')
-  static Stream<StreamSessionState> sessionStateStream() {
-    return MetaWearablesDatPlatform.instance.streamSessionStateStream();
-  }
-
-  /// **Deprecated** — alias for [streamSessionErrorStream]. Will be removed
-  /// in v0.2.0.
-  @Deprecated('Use streamSessionErrorStream() instead.')
-  static Stream<Object> sessionErrorStream() {
-    return MetaWearablesDatPlatform.instance.streamSessionErrorStream();
-  }
-
-  /// Broadcast stream of [VideoStreamSize] updates emitted once per
-  /// resolution change. Use the latest value to drive an `AspectRatio`
-  /// around the texture widget.
-  static Stream<VideoStreamSize> videoStreamSizeStream() {
-    return MetaWearablesDatPlatform.instance.videoStreamSizeStream();
-  }
-
-  /// Broadcast stream of every video frame produced by the active stream
-  /// session, suitable for recording / OCR / ML pipelines.
+  /// Experimental PCM audio, when the stream was started with
+  /// [StreamSessionConfig.audio].
   ///
-  /// Payloads are large (≈3.7 MB per 720p raw BGRA frame); the native side
-  /// only does the per-frame copy when at least one Dart subscriber is
-  /// attached. See `doc/frame_processing.md` for budget guidance.
-  static Stream<VideoFrame> videoFramesStream() {
-    return MetaWearablesDatPlatform.instance.videoFramesStream();
-  }
+  /// **Experimental:** cannot be used in apps on production release channels.
+  @experimental
+  static Stream<AudioFrame> audioFramesStream() => _p.audioFramesStream();
 
-  /// Keeps frames flowing through device sleep / screen lock / app
-  /// backgrounding.
+  /// Captures a photo from the running stream. Throws a [CaptureError].
+  static Future<PhotoResult> capturePhoto({
+    PhotoFormat format = PhotoFormat.jpeg,
+  }) => _p.capturePhoto(format: format);
+
+  /// Captures an experimental high-resolution photo (up to 4032 x 3024)
+  /// while the stream runs. Throws a [PhotoError].
   ///
-  /// On iOS this activates `AVAudioSession` with `.playAndRecord` /
-  /// `.videoRecording`, registers interruption + route-change observers
-  /// (so AVAudioSession is re-activated on recovery), and flips the
-  /// VTDecompression pipeline into software-only mode so frames keep
-  /// decoding while the app is backgrounded. The host app must declare
-  /// the matching `UIBackgroundModes` keys (`audio`, `bluetooth-central`,
-  /// `bluetooth-peripheral`, `external-accessory`) in its `Info.plist`.
-  ///
-  /// On Android this starts a foreground service of type
-  /// `FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE` showing
-  /// [androidNotification]'s details, acquires a partial wake lock, and
-  /// runtime-requests `POST_NOTIFICATIONS` on API 33+. Throws
-  /// [DatError] when [androidNotification] is null on Android.
-  static Future<void> enableBackgroundStreaming({
-    BackgroundNotification? androidNotification,
-  }) {
-    return MetaWearablesDatPlatform.instance.enableBackgroundStreaming(
-      androidNotification: androidNotification,
-    );
-  }
+  /// **Experimental:** cannot be used in apps on production release channels.
+  @experimental
+  static Future<HighResPhoto> captureHighResPhoto({
+    PhotoResolution resolution = PhotoResolution.medium,
+    PhotoQuality quality = PhotoQuality.medium,
+  }) => _p.captureHighResPhoto(resolution: resolution, quality: quality);
 
-  /// Reverses [enableBackgroundStreaming]: deactivates the iOS
-  /// `AVAudioSession`, stops the Android foreground service, and
-  /// releases the wake lock.
-  static Future<void> disableBackgroundStreaming() {
-    return MetaWearablesDatPlatform.instance.disableBackgroundStreaming();
-  }
+  /// Transfer progress of [captureHighResPhoto].
+  @experimental
+  static Stream<PhotoTransferProgress> photoTransferProgressStream() =>
+      _p.photoTransferProgressStream();
 
-  // --- Capture --------------------------------------------------------------
+  /// State of the high-resolution photo capability.
+  @experimental
+  static Stream<PhotoState> photoStateStream() => _p.photoStateStream();
 
-  /// Captures a single frame from a live texture in pure Dart, without
-  /// touching the platform channel for the pixel data.
+  /// Errors of the high-resolution photo capability.
+  @experimental
+  static Stream<PhotoError> photoErrorStream() => _p.photoErrorStream();
+
+  /// Renders the current texture frame into an image, without native
+  /// round-trips. Returns `null` when no frame size is known yet.
   static Future<FrameData?> captureStreamFrame(
     int textureId, {
     FrameFormat format = FrameFormat.rawRgba,
-  }) {
-    return MetaWearablesDatPlatform.instance.captureStreamFrame(
-      textureId,
-      format: format,
-    );
+  }) async {
+    VideoStreamSize size;
+    try {
+      size = await videoStreamSizeStream().first.timeout(
+        const Duration(seconds: 1),
+      );
+    } on TimeoutException {
+      return null;
+    }
+    if (size.width <= 0 || size.height <= 0) return null;
+    ui.Scene? scene;
+    ui.Image? image;
+    try {
+      final builder = ui.SceneBuilder()
+        ..pushOffset(0, 0)
+        ..addTexture(
+          textureId,
+          width: size.width.toDouble(),
+          height: size.height.toDouble(),
+        )
+        ..pop();
+      scene = builder.build();
+      image = await scene.toImage(size.width, size.height);
+      final byteData = await image.toByteData(
+        format: switch (format) {
+          FrameFormat.png => ui.ImageByteFormat.png,
+          FrameFormat.rawStraightRgba => ui.ImageByteFormat.rawStraightRgba,
+          FrameFormat.rawRgba => ui.ImageByteFormat.rawRgba,
+        },
+      );
+      if (byteData == null) {
+        throw const CaptureError(
+          reason: CaptureErrorCase.captureFailed,
+          message: 'toByteData returned null',
+        );
+      }
+      return FrameData(
+        bytes: byteData.buffer.asUint8List(
+          byteData.offsetInBytes,
+          byteData.lengthInBytes,
+        ),
+        width: size.width,
+        height: size.height,
+        format: format,
+      );
+    } finally {
+      image?.dispose();
+      scene?.dispose();
+    }
   }
 
-  /// Captures a high-resolution still mid-stream.
+  /// Keeps the stream running in the background. Android starts a
+  /// foreground service (pass [androidNotification]; request
+  /// `POST_NOTIFICATIONS` first on Android 13+). iOS keeps an audio session
+  /// alive; use [VideoCodec.hvc1], since raw frames pause in the background.
+  static Future<void> enableBackgroundStreaming({
+    BackgroundNotification? androidNotification,
+  }) => _p.enableBackgroundStreaming(androidNotification: androidNotification);
+
+  /// Stops background streaming.
+  static Future<void> disableBackgroundStreaming() =>
+      _p.disableBackgroundStreaming();
+
+  // --- Display -----------------------------------------------------------------------------
+
+  /// Starts the display on Meta Ray-Ban Display glasses. Throws a
+  /// [DeviceSessionError] or [DisplayError].
+  static Future<void> startDisplaySession({String? deviceUUID}) =>
+      _p.startDisplaySession(deviceUuid: deviceUUID);
+
+  /// Replaces the view on the glasses. Returns warnings for values the SDK
+  /// does not support (they are substituted, not fatal). Throws a
+  /// [DatArgumentError] for invalid trees, or a [DisplayError].
+  static Future<List<String>> sendDisplayView(DisplayView view) =>
+      _p.sendDisplayView(view);
+
+  /// Clears the display.
+  static Future<void> clearDisplay() => _p.clearDisplay();
+
+  /// Stops the video on screen.
+  static Future<void> stopDisplayVideo() => _p.stopDisplayVideo();
+
+  /// Stops the display and closes the session when nothing else uses it.
+  static Future<void> stopDisplaySession() => _p.stopDisplaySession();
+
+  /// Display state; emits the current state first. `stopped` also follows
+  /// the user pressing Back on the glasses.
+  static Stream<DisplayState> displayStateStream() => _p.displayStateStream();
+
+  /// Display and video playback errors.
+  static Stream<DisplayError> displayErrorStream() => _p.displayErrorStream();
+
+  /// Warnings for view values the SDK does not support.
+  static Stream<String> displayWarningStream() => _p.displayWarningStream();
+
+  // --- Experimental: Inputs ----------------------------------------------------------------------
+
+  /// Starts receiving touchpad, button and Meta Neural Band input.
   ///
-  /// Throws [CaptureError] if the device is disconnected, no session is
-  /// active, a capture is already in progress, or the SDK reports a
-  /// hardware-side capture failure.
-  static Future<PhotoResult> capturePhoto({
+  /// **Experimental:** cannot be used in apps on production release channels.
+  /// Inputs must be approved for the app in Wearables Developer Center.
+  @experimental
+  static Future<void> startInputs({
+    InputsConfiguration configuration = const InputsConfiguration(),
     String? deviceUUID,
-    PhotoFormat format = PhotoFormat.jpeg,
-  }) {
-    return MetaWearablesDatPlatform.instance.capturePhoto(
-      deviceUUID: deviceUUID,
-      format: format,
-    );
-  }
+  }) => _p.startInputs(configuration, deviceUuid: deviceUUID);
 
-  // --- Display --------------------------------------------------------------
+  /// Stops input events.
+  @experimental
+  static Future<void> stopInputs() => _p.stopInputs();
 
-  /// Attaches the display capability to a Ray-Ban Display device and starts
-  /// it, so [sendDisplayView] can render content on the glasses.
+  /// Input events.
+  @experimental
+  static Stream<InputEvent> inputEventsStream() => _p.inputEventsStream();
+
+  /// Inputs state.
+  @experimental
+  static Stream<InputsState> inputsStateStream() => _p.inputsStateStream();
+
+  /// Inputs errors. Every error ends the event stream.
+  @experimental
+  static Stream<InputsError> inputsErrorStream() => _p.inputsErrorStream();
+
+  // --- Experimental: Motion ------------------------------------------------------------------------
+
+  /// Starts head motion samples.
   ///
-  /// Pass [deviceUUID] to target a specific paired device; otherwise the SDK
-  /// auto-selects the best display-capable device. Observe progress via
-  /// [displayStateStream] (the display is ready once it reaches
-  /// [DisplayState.started]).
+  /// **Experimental:** cannot be used in apps on production release channels.
+  @experimental
+  static Future<void> startMotion({
+    MotionSamplingRate samplingRate = MotionSamplingRate.hz10,
+    String? deviceUUID,
+  }) => _p.startMotion(samplingRate, deviceUuid: deviceUUID);
+
+  /// Stops motion samples.
+  @experimental
+  static Future<void> stopMotion() => _p.stopMotion();
+
+  /// Motion samples; produced only while listened to.
+  @experimental
+  static Stream<MotionSample> motionSamplesStream() => _p.motionSamplesStream();
+
+  /// Motion state.
+  @experimental
+  static Stream<MotionState> motionStateStream() => _p.motionStateStream();
+
+  /// Motion errors.
+  @experimental
+  static Stream<MotionError> motionErrorStream() => _p.motionErrorStream();
+
+  // --- Experimental: Speech ------------------------------------------------------------------------
+
+  /// Starts on-device transcription from the glasses microphone. Requires
+  /// [Permission.microphone].
   ///
-  /// Throws [DeviceSessionError] if the session cannot be started (e.g.
-  /// `isDatAppUpdateRequired` when the on-glasses DAT app is too old).
-  static Future<void> startDisplaySession({String? deviceUUID}) {
-    return MetaWearablesDatPlatform.instance.startDisplaySession(
-      deviceUUID: deviceUUID,
-    );
-  }
+  /// **Experimental:** cannot be used in apps on production release channels.
+  @experimental
+  static Future<void> startSpeech({String? deviceUUID}) =>
+      _p.startSpeech(deviceUuid: deviceUUID);
 
-  /// Renders [view] on the glasses display, replacing whatever was shown
-  /// before.
+  /// Stops transcription.
+  @experimental
+  static Future<void> stopSpeech() => _p.stopSpeech();
+
+  /// Transcriptions.
+  @experimental
+  static Stream<TranscriptionResult> transcriptionStream() =>
+      _p.transcriptionStream();
+
+  /// Speech state.
+  @experimental
+  static Stream<SpeechState> speechStateStream() => _p.speechStateStream();
+
+  /// Speech errors.
+  @experimental
+  static Stream<SpeechError> speechErrorStream() => _p.speechErrorStream();
+
+  // --- Experimental: voice invocations ----------------------------------------------------------------
+
+  /// Starts listening for "Hey Meta" requests directed at this app.
   ///
-  /// Build [view] declaratively with [FlexBox], [DisplayText], [DisplayImage],
-  /// [DisplayButton], [DisplayIcon] and [VideoPlayer]. Tap / click / playback
-  /// handlers attached to the tree are invoked when the user interacts with
-  /// the rendered content.
-  ///
-  /// If no display session is active yet this will attach one on demand on
-  /// platforms that support it; otherwise call [startDisplaySession] first.
-  static Future<void> sendDisplayView(DisplayView view) {
-    return MetaWearablesDatPlatform.instance.sendDisplayView(view);
-  }
+  /// **Experimental:** cannot be used in apps on production release channels.
+  /// Needs the Voice Invocation permission approved in Wearables Developer
+  /// Center.
+  @experimental
+  static Future<void> startVoiceInvocations({String? deviceUUID}) =>
+      _p.startVoiceInvocations(deviceUuid: deviceUUID);
 
-  /// Detaches the display capability and tears down its device session.
-  static Future<void> stopDisplaySession() {
-    return MetaWearablesDatPlatform.instance.stopDisplaySession();
-  }
+  /// Stops voice invocations; unanswered ones are failed.
+  @experimental
+  static Future<void> stopVoiceInvocations() => _p.stopVoiceInvocations();
 
-  /// Broadcast stream of [DisplayState] changes for the display capability.
-  static Stream<DisplayState> displayStateStream() {
-    return MetaWearablesDatPlatform.instance.displayStateStream();
-  }
+  /// Voice invocations. Answer each exactly once.
+  @experimental
+  static Stream<VoiceInvocation> voiceInvocationsStream() =>
+      _p.voiceInvocationsStream();
 
-  // --- Mock Device Kit ------------------------------------------------------
+  /// Voice invocations stream state.
+  @experimental
+  static Stream<VoiceInvocationsState> voiceInvocationsStateStream() =>
+      _p.voiceInvocationsStateStream();
 
-  /// Enables Meta's Mock Device Kit so [pairMockRayBanMeta] and friends can
-  /// be used to develop without real glasses.
-  ///
-  /// [initiallyRegistered] / [initialPermissionsGranted] map to
-  /// `MockDeviceKit.shared.enable(config:)` on iOS (and the equivalent
-  /// Android API).
+  /// Voice invocation errors.
+  @experimental
+  static Stream<VoiceInvocationError> voiceInvocationErrorStream() =>
+      _p.voiceInvocationErrorStream();
+
+  // --- Mock Device Kit -------------------------------------------------------------------------------
+
+  /// Enables simulated glasses for development and tests. Disable before
+  /// shipping.
   static Future<void> enableMockDevice({
     bool initiallyRegistered = true,
     bool initialPermissionsGranted = true,
-  }) {
-    return MetaWearablesDatPlatform.instance.enableMockDevice(
-      initiallyRegistered: initiallyRegistered,
-      initialPermissionsGranted: initialPermissionsGranted,
-    );
+  }) => _p.enableMockDevice(
+    initiallyRegistered: initiallyRegistered,
+    initialPermissionsGranted: initialPermissionsGranted,
+  );
+
+  /// Disables simulated glasses and stops any session.
+  static Future<void> disableMockDevice() => _p.disableMockDevice();
+
+  /// Whether Mock Device Kit is enabled.
+  static Future<bool> isMockDeviceEnabled() => _p.isMockDeviceEnabled();
+
+  /// Pairs simulated glasses. They appear in [devicesStream] after
+  /// [mockPowerOn] and [mockUnfold].
+  static Future<DeviceInfo> pairMockGlasses([
+    MockGlassesModel model = MockGlassesModel.rayBanMeta,
+  ]) => _p.pairMockGlasses(model);
+
+  /// Pairs simulated Ray-Ban Meta glasses and returns their id.
+  @Deprecated('Use pairMockGlasses(MockGlassesModel.rayBanMeta)')
+  static Future<String> pairMockRayBanMeta() async =>
+      (await pairMockGlasses()).uuid;
+
+  /// Paired simulated devices.
+  static Future<List<DeviceInfo>> pairedMockDevices() => _p.pairedMockDevices();
+
+  /// Unpairs a simulated device.
+  static Future<void> unpairMockDevice(String uuid) =>
+      _p.unpairMockDevice(uuid);
+
+  /// Paired simulated devices; emits on every change.
+  static Stream<List<DeviceInfo>> mockDevicesStream() => _p.mockDevicesStream();
+
+  /// Powers the simulated glasses on.
+  static Future<void> mockPowerOn(String uuid) =>
+      _p.mockAction('mockPowerOn', uuid);
+
+  /// Powers the simulated glasses off.
+  static Future<void> mockPowerOff(String uuid) =>
+      _p.mockAction('mockPowerOff', uuid);
+
+  /// Puts the simulated glasses on.
+  static Future<void> mockDon(String uuid) => _p.mockAction('mockDon', uuid);
+
+  /// Takes the simulated glasses off.
+  static Future<void> mockDoff(String uuid) => _p.mockAction('mockDoff', uuid);
+
+  /// Folds the simulated glasses (ends sessions).
+  static Future<void> mockFold(String uuid) => _p.mockAction('mockFold', uuid);
+
+  /// Unfolds the simulated glasses.
+  static Future<void> mockUnfold(String uuid) =>
+      _p.mockAction('mockUnfold', uuid);
+
+  /// Simulates a touchpad tap (pauses or resumes the stream).
+  static Future<void> mockTap(String uuid) =>
+      _p.mockAction('mockCaptouchTap', uuid);
+
+  /// Simulates a touchpad tap-and-hold.
+  static Future<void> mockTapAndHold(String uuid) =>
+      _p.mockAction('mockCaptouchTapAndHold', uuid);
+
+  /// Sets the simulated battery level (0-100, `null` for unknown).
+  static Future<void> setMockBatteryLevel(String uuid, int? level) {
+    if (level != null && (level < 0 || level > 100)) {
+      throw DatArgumentError(
+        message: 'Battery level must be between 0 and 100 (got $level).',
+      );
+    }
+    return _p.setMockBatteryLevel(uuid, level);
   }
 
-  /// Disables the Mock Device Kit and unpairs all simulated devices.
-  static Future<void> disableMockDevice() {
-    return MetaWearablesDatPlatform.instance.disableMockDevice();
-  }
+  /// Sets the simulated charging state.
+  static Future<void> setMockChargingState(String uuid, ChargingState state) =>
+      _p.setMockChargingState(uuid, state);
 
-  /// Returns `true` if the Mock Device Kit is currently enabled.
-  static Future<bool> isMockDeviceEnabled() {
-    return MetaWearablesDatPlatform.instance.isMockDeviceEnabled();
-  }
+  /// Sets the simulated thermal level.
+  static Future<void> setMockThermalLevel(String uuid, ThermalLevel level) =>
+      _p.setMockThermalLevel(uuid, level);
 
-  /// Pairs a simulated Ray-Ban Meta device. Returns the UUID assigned to it.
-  static Future<String> pairMockRayBanMeta() {
-    return MetaWearablesDatPlatform.instance.pairMockRayBanMeta();
-  }
+  /// Streams the phone camera as the simulated glasses camera (needs the
+  /// host app's camera permission).
+  static Future<void> setMockCameraFacing(String uuid, CameraFacing facing) =>
+      _p.setMockCameraFacing(uuid, facing);
 
-  /// Returns the list of currently-paired mock devices.
-  static Future<List<DeviceInfo>> pairedMockDevices() {
-    return MetaWearablesDatPlatform.instance.pairedMockDevices();
-  }
+  /// Streams an H.265 video file as the simulated glasses camera.
+  static Future<void> setMockCameraFeed(String uuid, String filePath) =>
+      _p.setMockFile('setMockCameraFeed', uuid, filePath);
 
-  /// Unpairs a previously-paired mock device.
-  static Future<void> unpairMockDevice(String uuid) {
-    return MetaWearablesDatPlatform.instance.unpairMockDevice(uuid);
-  }
+  /// Sets the image [capturePhoto] returns.
+  static Future<void> setMockCapturedImage(String uuid, String filePath) =>
+      _p.setMockFile('setMockCapturedImage', uuid, filePath);
 
-  /// Powers a mock device on.
-  static Future<void> mockPowerOn(String uuid) {
-    return MetaWearablesDatPlatform.instance.mockPowerOn(uuid);
-  }
+  /// Sets the image [captureHighResPhoto] returns.
+  @experimental
+  static Future<void> setMockCapturedPhoto(String uuid, String filePath) =>
+      _p.setMockFile('setMockCapturedPhoto', uuid, filePath);
 
-  /// Powers a mock device off.
-  static Future<void> mockPowerOff(String uuid) {
-    return MetaWearablesDatPlatform.instance.mockPowerOff(uuid);
-  }
+  /// Makes the next [captureHighResPhoto] fail.
+  @experimental
+  static Future<void> simulateMockCaptureFailure(String uuid) =>
+      _p.simulateMockCaptureFailure(uuid);
 
-  /// Marks the mock device as worn ("donned").
-  static Future<void> mockDon(String uuid) {
-    return MetaWearablesDatPlatform.instance.mockDon(uuid);
-  }
-
-  /// Marks the mock device as removed ("doffed").
-  static Future<void> mockDoff(String uuid) {
-    return MetaWearablesDatPlatform.instance.mockDoff(uuid);
-  }
-
-  /// Folds the mock device (sleep-like state for displayless glasses).
-  static Future<void> mockFold(String uuid) {
-    return MetaWearablesDatPlatform.instance.mockFold(uuid);
-  }
-
-  /// Unfolds the mock device.
-  static Future<void> mockUnfold(String uuid) {
-    return MetaWearablesDatPlatform.instance.mockUnfold(uuid);
-  }
-
-  /// Picks which of the host phone's cameras feeds the simulated device.
-  static Future<void> setMockCameraFacing(String uuid, CameraFacing facing) {
-    return MetaWearablesDatPlatform.instance.setMockCameraFacing(uuid, facing);
-  }
-
-  /// Sets a video file (or content URI on Android) as the mock device's
-  /// camera feed. Pass `null` for [filePath] to clear it.
-  static Future<void> setMockCameraFeed(String uuid, String? filePath) {
-    return MetaWearablesDatPlatform.instance.setMockCameraFeed(uuid, filePath);
-  }
-
-  /// Sets a still image file as what the mock device returns from
-  /// [capturePhoto] requests. Pass `null` for [filePath] to clear it.
-  static Future<void> setMockCapturedImage(String uuid, String? filePath) {
-    return MetaWearablesDatPlatform.instance.setMockCapturedImage(
-      uuid,
-      filePath,
-    );
-  }
-
-  /// Sets the current permission status reported by the Mock Device Kit
-  /// for [permission].
+  /// Sets a simulated permission status.
   static Future<void> setMockPermission(
-    MockPermission permission,
-    MockPermissionStatus status,
-  ) {
-    return MetaWearablesDatPlatform.instance.setMockPermission(
-      permission.value,
-      status.value,
-    );
-  }
+    Permission permission,
+    PermissionStatus status,
+  ) => _p.setMockPermission(permission, status, requestResult: false);
 
-  /// Sets what the **next** `requestPermission` call resolves to.
+  /// Sets the result the next [requestPermission] call returns.
   static Future<void> setMockPermissionRequestResult(
-    MockPermission permission,
-    MockPermissionStatus status,
-  ) {
-    return MetaWearablesDatPlatform.instance.setMockPermissionRequestResult(
-      permission.value,
-      status.value,
-    );
+    Permission permission,
+    PermissionStatus status,
+  ) => _p.setMockPermission(permission, status, requestResult: true);
+
+  /// Simulates a navigation input.
+  @experimental
+  static Future<void> mockInputNav(
+    String uuid,
+    NavDirection direction, {
+    InputSource source = InputSource.captouch,
+  }) {
+    final action = switch (direction) {
+      NavDirection.up => 'navUp',
+      NavDirection.down => 'navDown',
+      NavDirection.left => 'navLeft',
+      NavDirection.right || NavDirection.unknown => 'navRight',
+    };
+    return _p.mockInput(uuid, {'action': action, 'source': source.name});
   }
 
-  /// Broadcast stream of currently paired mock devices.
-  static Stream<List<DeviceInfo>> mockDevicesStream() {
-    return MetaWearablesDatPlatform.instance.mockDevicesStream();
-  }
+  /// Simulates a select input.
+  @experimental
+  static Future<void> mockInputSelect(
+    String uuid, {
+    InputSource source = InputSource.captouch,
+  }) => _p.mockInput(uuid, {'action': 'select', 'source': source.name});
+
+  /// Simulates a back input.
+  @experimental
+  static Future<void> mockInputBack(
+    String uuid, {
+    InputSource source = InputSource.captouch,
+  }) => _p.mockInput(uuid, {'action': 'back', 'source': source.name});
+
+  /// Simulates a capture-button press.
+  @experimental
+  static Future<void> mockInputCapture(
+    String uuid, {
+    CapturePressType pressType = CapturePressType.shortPress,
+  }) => _p.mockInput(uuid, {'action': 'capture', 'pressType': pressType.name});
+
+  /// Simulates an action-button press.
+  @experimental
+  static Future<void> mockInputButton(String uuid) =>
+      _p.mockInput(uuid, {'action': 'button'});
+
+  /// Simulates a Meta Neural Band drag.
+  @experimental
+  static Future<void> mockInputDrag(
+    String uuid, {
+    required DragAction action,
+    double x = 0,
+    double y = 0,
+    double dx = 0,
+    double dy = 0,
+  }) => _p.mockInput(uuid, {
+    'action': 'drag',
+    'dragAction': action.name,
+    'x': x,
+    'y': y,
+    'dx': dx,
+    'dy': dy,
+  });
+
+  /// Selects where simulated transcriptions come from.
+  @experimental
+  static Future<void> setMockSpeechSource(
+    String uuid,
+    MockSpeechSource source,
+  ) => _p.mockSpeech(uuid, {'action': 'source', 'source': source.name});
+
+  /// Emits a simulated transcription.
+  @experimental
+  static Future<void> simulateMockTranscription(
+    String uuid,
+    String text, {
+    bool isFinal = true,
+    double confidence = 1,
+  }) => _p.mockSpeech(uuid, {
+    'action': 'transcription',
+    'text': text,
+    'isFinal': isFinal,
+    'confidence': confidence,
+  });
+
+  /// Emits a simulated speech error.
+  @experimental
+  static Future<void> simulateMockSpeechError(
+    String uuid, {
+    int errorCode = 0,
+    String message = '',
+  }) => _p.mockSpeech(uuid, {
+    'action': 'error',
+    'errorCode': errorCode,
+    'message': message,
+  });
+
+  /// Ends the simulated speech session.
+  @experimental
+  static Future<void> simulateMockSpeechCompletion(String uuid) =>
+      _p.mockSpeech(uuid, {'action': 'completion'});
+
+  /// Feeds simulated motion samples (or a CSV [filePath]).
+  @experimental
+  static Future<void> setMockMotionFeed(
+    String uuid, {
+    List<MotionSample>? samples,
+    String? filePath,
+    bool loop = true,
+  }) => _p.setMockMotionFeed(
+    uuid,
+    samples: samples,
+    filePath: filePath,
+    loop: loop,
+  );
+
+  /// Sends a simulated "Hey Meta, open `app`" request. Returns the mock's
+  /// action id, if any.
+  @experimental
+  static Future<String?> simulateMockVoiceInvocation(
+    String uuid, {
+    bool incomplete = false,
+  }) => _p.simulateMockVoiceInvocation(uuid, incomplete: incomplete);
+
+  /// Starts the mock test server. With the Chrome "Meta Ray-Ban Display
+  /// Simulator" extension open `http://127.0.0.1:<port>/` to preview the
+  /// display (iOS Simulator only; Android needs `adb forward tcp:<port> tcp:<port>`).
+  static Future<int> startMockTestServer({int port = 9000}) =>
+      _p.startMockTestServer(port: port);
+
+  /// Stops the mock test server.
+  static Future<void> stopMockTestServer() => _p.stopMockTestServer();
+
+  /// Clicks a clickable display component of simulated display glasses.
+  /// The SDK numbers clickable components (`'0'`, `'1'`, ...) in the order
+  /// the view builds them. Returns whether a component was clicked.
+  static Future<bool> sendMockDisplayClick(String uuid, String identifier) =>
+      _p.sendMockDisplayClick(uuid, identifier);
 }

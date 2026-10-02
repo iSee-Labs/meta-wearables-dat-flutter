@@ -1,24 +1,23 @@
 import 'dart:typed_data';
 
-/// A high-resolution still captured by [MetaWearablesDat.capturePhoto].
+/// Encoding of a photo captured from the stream.
+enum PhotoFormat {
+  /// JPEG.
+  jpeg,
+
+  /// HEIC. Android returns JPEG when the glasses deliver an uncompressed
+  /// bitmap; check [PhotoResult.format].
+  heic,
+}
+
+/// A photo captured from the running stream.
 class PhotoResult {
   /// Creates a [PhotoResult].
   const PhotoResult({required this.bytes, required this.format});
 
-  /// The encoded image bytes.
+  /// Encoded image bytes.
   final Uint8List bytes;
 
-  /// Encoding of [bytes].
+  /// The actual encoding of [bytes].
   final PhotoFormat format;
-}
-
-/// Encoded image format produced by [MetaWearablesDat.capturePhoto].
-enum PhotoFormat {
-  /// JPEG. Available on both iOS and Android.
-  jpeg,
-
-  /// HEIC / HEIF. Available on iOS; on Android availability depends on the
-  /// device generation. Prefer [PhotoFormat.jpeg] for cross-platform
-  /// portability.
-  heic,
 }

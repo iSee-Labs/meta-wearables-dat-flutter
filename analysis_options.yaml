@@ -10,6 +10,13 @@ analyzer:
     # analysis_options. They are linted independently via
     # `cd samples/camera_access && flutter analyze`.
     - samples/**
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
 
 # Project-specific overrides for the v0.1.0 development cut.
 # Slice 12 (docs) re-enables `public_member_api_docs` after every public API

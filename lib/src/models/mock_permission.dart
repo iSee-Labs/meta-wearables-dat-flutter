@@ -1,24 +1,9 @@
-/// A wearable-side permission that the Mock Device Kit can pre-populate.
-enum MockPermission {
-  /// Camera permission (Meta AI camera-access bottom sheet on real devices).
-  camera('camera');
+import 'package:meta_wearables_dat_flutter/src/models/permission.dart';
 
-  const MockPermission(this.value);
+/// Former name of [Permission].
+@Deprecated('Use Permission')
+typedef MockPermission = Permission;
 
-  /// String passed to the native side over the method channel.
-  final String value;
-}
-
-/// The status the Mock Device Kit should report for a given [MockPermission].
-enum MockPermissionStatus {
-  /// Permission is granted.
-  granted('granted'),
-
-  /// Permission has been denied.
-  denied('denied');
-
-  const MockPermissionStatus(this.value);
-
-  /// String passed to the native side over the method channel.
-  final String value;
-}
+/// Former name of [PermissionStatus].
+@Deprecated('Use PermissionStatus')
+typedef MockPermissionStatus = PermissionStatus;

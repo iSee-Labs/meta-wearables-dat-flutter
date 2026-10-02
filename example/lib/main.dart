@@ -108,12 +108,14 @@ class _MyAppState extends State<MyApp> {
 
   Future<void> _requestCameraPermission() => _safeCall(
         () async {
-          final granted = await MetaWearablesDat.requestCameraPermission();
+          final status = await MetaWearablesDat.requestPermission(
+            Permission.camera,
+          );
           _messengerKey.currentState?.showSnackBar(
-            SnackBar(content: Text('Camera permission: $granted')),
+            SnackBar(content: Text('Camera permission: ${status.name}')),
           );
         },
-        label: 'requestCameraPermission',
+        label: 'requestPermission',
       );
 
   Future<void> _startStreaming() => _safeCall(

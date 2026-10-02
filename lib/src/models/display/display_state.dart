@@ -1,38 +1,29 @@
-/// Lifecycle state of the [Display] capability attached to a `DeviceSession`.
-///
-/// Surfaced by `MetaWearablesDat.displayStateStream()`. Mirrors the
-/// `DisplayState` enum in Meta's iOS / Android DAT SDKs (added in DAT 0.7.0).
+/// State of the display capability.
 enum DisplayState {
-  /// The display capability has been requested and is being set up.
-  starting(0),
+  /// Starting.
+  starting,
 
-  /// The display is ready; views can be sent with `sendDisplayView`.
-  started(1),
+  /// Ready to receive views.
+  started,
 
-  /// The display is being torn down.
-  stopping(2),
+  /// Stopping.
+  stopping,
 
-  /// The display is no longer attached.
-  stopped(3);
+  /// Stopped (also after the user pressed Back on the glasses).
+  stopped;
 
-  const DisplayState(this.value);
-
-  /// The integer used on the platform channel.
-  final int value;
-
-  /// Maps a platform-channel integer to a [DisplayState].
-  static DisplayState fromInt(int? value) {
-    switch (value) {
-      case 0:
-        return DisplayState.starting;
-      case 1:
-        return DisplayState.started;
-      case 2:
-        return DisplayState.stopping;
-      case 3:
-        return DisplayState.stopped;
-      case _:
-        return DisplayState.stopped;
+  /// Parses the wire name; unknown values map to [stopped].
+  static DisplayState fromWire(Object? raw) {
+    for (final value in values) {
+      if (value.name == raw) return value;
     }
+    return stopped;
   }
+
+  /// Parses the integer encoding used before 1.0.
+  @Deprecated('State now travels as a string; use fromWire')
+  static DisplayState fromInt(int? value) =>
+      value != null && value >= 0 && value < values.length
+      ? values[value]
+      : stopped;
 }

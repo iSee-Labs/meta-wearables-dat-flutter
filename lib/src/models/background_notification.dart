@@ -42,10 +42,10 @@ class BackgroundNotification {
   /// Serialises to the platform-channel argument map consumed by the
   /// Android side.
   Map<String, Object?> toMap() => <String, Object?>{
-        'title': title,
-        'text': text,
-        'channelId': channelId,
-        'channelName': channelName,
-        if (iconResourceName != null) 'iconResourceName': iconResourceName,
-      };
+    'title': title,
+    'text': text,
+    'channelId': channelId,
+    'channelName': channelName,
+    if (iconResourceName != null) 'iconResourceName': iconResourceName,
+  };
 }

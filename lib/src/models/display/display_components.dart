@@ -1,12 +1,21 @@
+import 'dart:typed_data';
+
+import 'package:meta_wearables_dat_flutter/src/models/display/display_icon_name.dart';
 import 'package:meta_wearables_dat_flutter/src/models/display/display_playback_event.dart';
 
 /// Layout direction of a [FlexBox]'s children.
 enum DisplayDirection {
-  /// Lay children out horizontally.
+  /// Horizontal.
   row('row'),
 
-  /// Lay children out vertically.
-  column('column');
+  /// Vertical (default).
+  column('column'),
+
+  /// Horizontal, reversed.
+  rowReverse('rowReverse'),
+
+  /// Vertical, reversed.
+  columnReverse('columnReverse');
 
   const DisplayDirection(this.wireName);
 
@@ -14,26 +23,30 @@ enum DisplayDirection {
   final String wireName;
 }
 
-/// Main-axis / cross-axis alignment of a [FlexBox]'s children.
-///
-/// Used for both `alignment` (main axis) and `crossAlignment` (cross axis).
+/// Alignment of children (main axis, cross axis or `alignSelf`).
 enum DisplayAlignment {
-  /// Pack children towards the start.
+  /// Start.
   start('start'),
 
-  /// Center children.
+  /// Center.
   center('center'),
 
-  /// Pack children towards the end.
+  /// End.
   end('end'),
 
-  /// Distribute free space between children.
+  /// Stretch to fill the cross axis.
+  stretch('stretch'),
+
+  /// Not supported by the DAT Display SDK; rendered as [center].
+  @Deprecated('Not supported by the DAT Display SDK; renders as center')
   spaceBetween('spaceBetween'),
 
-  /// Distribute free space around children.
+  /// Not supported by the DAT Display SDK; rendered as [center].
+  @Deprecated('Not supported by the DAT Display SDK; renders as center')
   spaceAround('spaceAround'),
 
-  /// Distribute free space evenly around children.
+  /// Not supported by the DAT Display SDK; rendered as [center].
+  @Deprecated('Not supported by the DAT Display SDK; renders as center')
   spaceEvenly('spaceEvenly');
 
   const DisplayAlignment(this.wireName);
@@ -44,13 +57,13 @@ enum DisplayAlignment {
 
 /// Typographic style of a [DisplayText].
 enum DisplayTextStyle {
-  /// Prominent heading text.
+  /// Heading.
   heading('heading'),
 
-  /// Default body text.
+  /// Body (default).
   body('body'),
 
-  /// De-emphasised metadata text.
+  /// De-emphasised metadata.
   meta('meta');
 
   const DisplayTextStyle(this.wireName);
@@ -61,10 +74,10 @@ enum DisplayTextStyle {
 
 /// Color role of a [DisplayText].
 enum DisplayTextColor {
-  /// The primary (default) text color.
+  /// Primary (default).
   primary('primary'),
 
-  /// A de-emphasised secondary text color.
+  /// Secondary.
   secondary('secondary');
 
   const DisplayTextColor(this.wireName);
@@ -73,10 +86,13 @@ enum DisplayTextColor {
   final String wireName;
 }
 
-/// Sizing preset for a [DisplayImage].
+/// Sizing preset of a [DisplayImage].
 enum DisplayImageSize {
-  /// Fill the available width, preserving aspect ratio.
-  fill('fill');
+  /// Fill the available width, keeping the aspect ratio.
+  fill('fill'),
+
+  /// Icon-sized.
+  icon('icon');
 
   const DisplayImageSize(this.wireName);
 
@@ -84,18 +100,19 @@ enum DisplayImageSize {
   final String wireName;
 }
 
-/// Corner-radius preset applied to a [DisplayImage] or [FlexBox].
+/// Corner-radius preset of a [DisplayImage].
 enum DisplayCornerRadius {
   /// Square corners.
   none('none'),
 
-  /// A small corner radius.
+  /// Small radius.
   small('small'),
 
-  /// A medium corner radius.
+  /// Medium radius.
   medium('medium'),
 
-  /// A large corner radius.
+  /// Not supported by the DAT Display SDK; rendered as [medium].
+  @Deprecated('Not supported by the DAT Display SDK; renders as medium')
   large('large');
 
   const DisplayCornerRadius(this.wireName);
@@ -106,11 +123,14 @@ enum DisplayCornerRadius {
 
 /// Visual style of a [DisplayButton].
 enum DisplayButtonStyle {
-  /// The primary, high-emphasis button style.
+  /// High emphasis (default).
   primary('primary'),
 
-  /// The secondary, lower-emphasis button style.
-  secondary('secondary');
+  /// Lower emphasis.
+  secondary('secondary'),
+
+  /// Outlined.
+  outline('outline');
 
   const DisplayButtonStyle(this.wireName);
 
@@ -118,37 +138,55 @@ enum DisplayButtonStyle {
   final String wireName;
 }
 
-/// Built-in glyph rendered by a [DisplayIcon] or shown inside a
-/// [DisplayButton].
-///
-/// Names mirror Meta's `IconName` (Android) / `Icon` (iOS) enums; the wire
-/// token is normalised to camelCase and mapped back to each platform's enum
-/// natively.
-enum DisplayIconName {
-  /// A checkmark glyph.
-  checkmark('checkmark'),
+/// Role of a [DisplayButton].
+enum DisplayActionRole {
+  /// The primary action. The first primary button gets focus when the view
+  /// first renders.
+  primary('primary');
 
-  /// A video-camera glyph.
-  videoCamera('videoCamera'),
-
-  /// A left-pointing triangle (with a vertical line).
-  triangleLeftVerticalLine('triangleLeftVerticalLine'),
-
-  /// A right-pointing triangle (with a vertical line).
-  triangleRightVerticalLine('triangleRightVerticalLine');
-
-  const DisplayIconName(this.wireName);
+  const DisplayActionRole(this.wireName);
 
   /// The string used on the platform channel.
   final String wireName;
 }
 
-/// Container background preset for a [FlexBox].
+/// Style of a [DisplayIcon].
+enum DisplayIconStyle {
+  /// Solid (default).
+  filled('filled'),
+
+  /// Hollow.
+  outline('outline');
+
+  const DisplayIconStyle(this.wireName);
+
+  /// The string used on the platform channel.
+  final String wireName;
+}
+
+/// Alignment of the buttons in a [DisplayButtonGroup].
+enum DisplayButtonGroupAlignment {
+  /// Start.
+  start('start'),
+
+  /// Center (default).
+  center('center'),
+
+  /// End.
+  end('end');
+
+  const DisplayButtonGroupAlignment(this.wireName);
+
+  /// The string used on the platform channel.
+  final String wireName;
+}
+
+/// Background preset of a [FlexBox].
 enum FlexBoxBackground {
-  /// No background.
+  /// None (default).
   none('none'),
 
-  /// The standard "card" surface background.
+  /// Card surface.
   card('card');
 
   const FlexBoxBackground(this.wireName);
@@ -157,9 +195,9 @@ enum FlexBoxBackground {
   final String wireName;
 }
 
-/// Container codec hint for a [VideoPlayer].
+/// Container format of a [VideoPlayer] source.
 enum DisplayVideoCodec {
-  /// An MP4-contained video.
+  /// MP4 (the only format the DAT Display SDK plays).
   mp4('mp4');
 
   const DisplayVideoCodec(this.wireName);
@@ -168,12 +206,55 @@ enum DisplayVideoCodec {
   final String wireName;
 }
 
-/// Collects the callbacks attached to a display view tree and assigns each a
-/// stable id so they can be serialized and later dispatched from native
-/// tap / click / playback events.
+/// Per-edge padding of a [FlexBox], in logical pixels.
+class DisplayEdgeInsets {
+  /// Creates insets with individual values.
+  const DisplayEdgeInsets.only({
+    this.top = 0,
+    this.bottom = 0,
+    this.start = 0,
+    this.end = 0,
+  });
+
+  /// Creates equal insets on every edge.
+  const DisplayEdgeInsets.all(int value)
+    : this.only(top: value, bottom: value, start: value, end: value);
+
+  /// Creates horizontal and vertical insets.
+  const DisplayEdgeInsets.symmetric({int horizontal = 0, int vertical = 0})
+    : this.only(
+        top: vertical,
+        bottom: vertical,
+        start: horizontal,
+        end: horizontal,
+      );
+
+  /// Top inset.
+  final int top;
+
+  /// Bottom inset.
+  final int bottom;
+
+  /// Leading inset.
+  final int start;
+
+  /// Trailing inset.
+  final int end;
+
+  /// Platform-channel encoding.
+  Map<String, int> toJson() => {
+    'top': top,
+    'bottom': bottom,
+    'start': start,
+    'end': end,
+  };
+}
+
+/// Collects the callbacks of one view tree and assigns each a stable id, so
+/// native tap, click and playback events can be dispatched back.
 ///
-/// One table is built per `sendDisplayView` call; ids are only meaningful for
-/// the view currently shown on the glasses.
+/// One table is built per `sendDisplayView` call; each send replaces the
+/// view and every handler on the glasses.
 class DisplayCallbackTable {
   final Map<String, void Function()> _voidCallbacks =
       <String, void Function()>{};
@@ -181,8 +262,8 @@ class DisplayCallbackTable {
       <String, void Function(DisplayPlaybackEvent)>{};
   int _next = 0;
 
-  /// Registers a no-argument [callback] (a tap / click) and returns its id, or
-  /// `null` when [callback] is `null`.
+  /// Registers a tap or click [callback] and returns its id, or `null` when
+  /// [callback] is `null`.
   String? registerTap(void Function()? callback) {
     if (callback == null) return null;
     final id = 'cb${_next++}';
@@ -202,10 +283,10 @@ class DisplayCallbackTable {
   /// Whether no callbacks were registered.
   bool get isEmpty => _voidCallbacks.isEmpty && _playbackCallbacks.isEmpty;
 
-  /// The total number of registered callbacks.
+  /// Number of registered callbacks.
   int get length => _voidCallbacks.length + _playbackCallbacks.length;
 
-  /// Dispatches a `display_events` channel [event] to the matching callback.
+  /// Dispatches a `display_events` [event] to the matching callback.
   void dispatch(Map<Object?, Object?> event) {
     final id = event['callbackId'] as String?;
     if (id == null) return;
@@ -218,42 +299,81 @@ class DisplayCallbackTable {
   }
 }
 
-/// Base class for every node in a display view tree sent to the glasses with
-/// `MetaWearablesDat.sendDisplayView`.
+/// A problem found by [DisplayNode.validate].
+class DisplayValidationIssue {
+  /// Creates a [DisplayValidationIssue].
+  const DisplayValidationIssue(this.message, {this.isFatal = false});
+
+  /// What is wrong.
+  final String message;
+
+  /// Whether the view cannot be sent.
+  final bool isFatal;
+
+  @override
+  String toString() => '${isFatal ? 'error' : 'warning'}: $message';
+}
+
+/// Base class of every node in a view tree sent to Meta Ray-Ban Display
+/// glasses with `MetaWearablesDat.sendDisplayView`.
 ///
-/// A tree is built declaratively, e.g.:
+/// The display is 600 x 600, scrolls vertically only, and every send
+/// replaces the whole view. The root is a [FlexBox] or a [VideoPlayer].
 ///
 /// ```dart
 /// FlexBox(
-///   direction: DisplayDirection.column,
 ///   spacing: 12,
 ///   children: [
 ///     DisplayText('Hello', style: DisplayTextStyle.heading),
-///     DisplayButton(label: 'OK', onClick: () => print('tapped')),
+///     DisplayButtonGroup(buttons: [
+///       DisplayButton(label: 'OK', actionRole: DisplayActionRole.primary, onClick: () {}),
+///     ]),
 ///   ],
 /// )
 /// ```
 sealed class DisplayNode {
-  /// Const base constructor.
-  const DisplayNode();
+  const DisplayNode({this.flexGrow, this.flexShrink, this.alignSelf});
 
-  /// Serializes this node (and its subtree) to a platform-channel map.
-  ///
-  /// When [callbacks] is provided, any attached tap / click / playback
-  /// handlers are registered into it and the resulting ids are embedded in the
-  /// returned map. When `null`, callbacks are omitted (useful for inspection
-  /// and tests).
+  /// Flex-grow factor relative to siblings.
+  final double? flexGrow;
+
+  /// Flex-shrink factor relative to siblings.
+  final double? flexShrink;
+
+  /// Cross-axis alignment overriding the parent's.
+  final DisplayAlignment? alignSelf;
+
+  /// Serializes this node and its subtree. When [callbacks] is given, the
+  /// handlers are registered into it and their ids embedded.
   Map<String, Object?> toJson([DisplayCallbackTable? callbacks]);
+
+  /// Checks this tree against the Display SDK's rules.
+  List<DisplayValidationIssue> validate() {
+    final issues = <DisplayValidationIssue>[];
+    if (this is! FlexBox && this is! VideoPlayer) {
+      issues.add(
+        const DisplayValidationIssue(
+          'The root is not a FlexBox; it will be wrapped in a column.',
+        ),
+      );
+    }
+    _validate(issues, isRoot: true);
+    return issues;
+  }
+
+  void _validate(List<DisplayValidationIssue> issues, {required bool isRoot}) {}
+
+  Map<String, Object?> _flexJson() => {
+    if (flexGrow != null) 'flexGrow': flexGrow,
+    if (flexShrink != null) 'flexShrink': flexShrink,
+    if (alignSelf != null) 'alignSelf': alignSelf!.wireName,
+  };
 }
 
-/// The root of a display view tree. Any [DisplayNode] may be a root, but in
-/// practice this is a [FlexBox] or a [VideoPlayer].
+/// The root of a view tree.
 typedef DisplayView = DisplayNode;
 
-/// A flexbox container that arranges its [children] along a [direction].
-///
-/// Mirrors Meta's `FlexBox` (iOS) / `flexBox { }` (Android) builder, including
-/// the `padding`, `background`, `flexGrow` and `onTap` modifiers.
+/// A flexbox container that lays its [children] out along [direction].
 class FlexBox extends DisplayNode {
   /// Creates a [FlexBox].
   const FlexBox({
@@ -261,200 +381,306 @@ class FlexBox extends DisplayNode {
     this.direction = DisplayDirection.column,
     this.spacing = 0,
     this.padding,
+    this.paddingInsets,
     this.background,
     this.alignment,
     this.crossAlignment,
+    @Deprecated('Not supported by the DAT Display SDK; ignored')
     this.cornerRadius,
     this.wrap,
-    this.flexGrow,
     this.onTap,
+    super.flexGrow,
+    super.flexShrink,
+    super.alignSelf,
   });
 
-  /// The child nodes laid out inside this container.
+  /// Child nodes.
   final List<DisplayNode> children;
 
-  /// The axis children are laid out along.
+  /// Layout axis.
   final DisplayDirection direction;
 
-  /// The gap between adjacent children, in logical pixels.
+  /// Gap between children, in logical pixels.
   final int spacing;
 
-  /// Optional uniform inner padding, in logical pixels.
+  /// Equal padding on every edge. Ignored when [paddingInsets] is set.
   final int? padding;
 
-  /// Optional background preset.
+  /// Per-edge padding.
+  final DisplayEdgeInsets? paddingInsets;
+
+  /// Background preset.
   final FlexBoxBackground? background;
 
-  /// Optional main-axis alignment.
+  /// Main-axis alignment.
   final DisplayAlignment? alignment;
 
-  /// Optional cross-axis alignment.
+  /// Cross-axis alignment.
   final DisplayAlignment? crossAlignment;
 
-  /// Optional corner-radius preset.
+  /// Not supported by the DAT Display SDK; ignored.
+  @Deprecated('Not supported by the DAT Display SDK; ignored')
   final DisplayCornerRadius? cornerRadius;
 
-  /// Whether children may wrap onto multiple lines.
+  /// Whether children wrap onto multiple lines.
   final bool? wrap;
 
-  /// Optional flex-grow factor relative to sibling [FlexBox]es.
-  final double? flexGrow;
-
-  /// Optional tap handler for the whole container.
+  /// Tap handler for the whole container.
   final void Function()? onTap;
 
   @override
-  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) {
-    return <String, Object?>{
-      'type': 'flexBox',
-      'direction': direction.wireName,
-      'spacing': spacing,
-      if (padding != null) 'padding': padding,
-      if (background != null) 'background': background!.wireName,
-      if (alignment != null) 'alignment': alignment!.wireName,
-      if (crossAlignment != null) 'crossAlignment': crossAlignment!.wireName,
-      if (cornerRadius != null) 'cornerRadius': cornerRadius!.wireName,
-      if (wrap != null) 'wrap': wrap,
-      if (flexGrow != null) 'flexGrow': flexGrow,
-      if (callbacks?.registerTap(onTap) case final String id) 'onTapId': id,
-      'children': children
-          .map((child) => child.toJson(callbacks))
-          .toList(growable: false),
-    };
+  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) => {
+    'type': 'flexBox',
+    'direction': direction.wireName,
+    'spacing': spacing,
+    if (padding != null) 'padding': padding,
+    if (paddingInsets != null) 'paddingInsets': paddingInsets!.toJson(),
+    if (background != null) 'background': background!.wireName,
+    if (alignment != null) 'alignment': alignment!.wireName,
+    if (crossAlignment != null) 'crossAlignment': crossAlignment!.wireName,
+    // ignore: deprecated_member_use_from_same_package
+    if (cornerRadius != null) 'cornerRadius': cornerRadius!.wireName,
+    if (wrap != null) 'wrap': wrap,
+    if (callbacks?.registerTap(onTap) case final String id) 'onTapId': id,
+    ..._flexJson(),
+    'children': children
+        .map((child) => child.toJson(callbacks))
+        .toList(growable: false),
+  };
+
+  @override
+  void _validate(List<DisplayValidationIssue> issues, {required bool isRoot}) {
+    for (final child in children) {
+      if (child is VideoPlayer) {
+        issues.add(
+          const DisplayValidationIssue(
+            'VideoPlayer must be the root view; it cannot be nested.',
+            isFatal: true,
+          ),
+        );
+      }
+      child._validate(issues, isRoot: false);
+    }
   }
 }
 
-/// A run of text rendered on the glasses display.
+/// Text.
 class DisplayText extends DisplayNode {
   /// Creates a [DisplayText].
-  const DisplayText(this.text, {this.style, this.color});
+  const DisplayText(
+    this.text, {
+    this.style,
+    this.color,
+    super.flexGrow,
+    super.flexShrink,
+    super.alignSelf,
+  });
 
-  /// The text to render.
+  /// The text.
   final String text;
 
-  /// Optional typographic style.
+  /// Typographic style.
   final DisplayTextStyle? style;
 
-  /// Optional color role.
+  /// Color role.
   final DisplayTextColor? color;
 
   @override
-  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) {
-    return <String, Object?>{
-      'type': 'text',
-      'text': text,
-      if (style != null) 'style': style!.wireName,
-      if (color != null) 'color': color!.wireName,
-    };
-  }
+  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) => {
+    'type': 'text',
+    'text': text,
+    if (style != null) 'style': style!.wireName,
+    if (color != null) 'color': color!.wireName,
+    ..._flexJson(),
+  };
 }
 
-/// A remote image rendered on the glasses display.
+/// An image from a URL (https or `data:`) or from encoded bytes.
 class DisplayImage extends DisplayNode {
-  /// Creates a [DisplayImage].
-  const DisplayImage(this.uri, {this.sizePreset, this.cornerRadius});
+  /// Creates an image loaded from [uri].
+  const DisplayImage(
+    String this.uri, {
+    this.sizePreset,
+    this.cornerRadius,
+    super.flexGrow,
+    super.flexShrink,
+    super.alignSelf,
+  }) : bytes = null;
 
-  /// The image URL.
-  final String uri;
+  /// Creates an image from encoded PNG or JPEG [bytes]. The SDK downscales
+  /// it to the display bounds.
+  const DisplayImage.bytes(
+    Uint8List this.bytes, {
+    this.sizePreset,
+    this.cornerRadius,
+    super.flexGrow,
+    super.flexShrink,
+    super.alignSelf,
+  }) : uri = null;
 
-  /// Optional sizing preset.
+  /// Image URL.
+  final String? uri;
+
+  /// Encoded image bytes.
+  final Uint8List? bytes;
+
+  /// Sizing preset.
   final DisplayImageSize? sizePreset;
 
-  /// Optional corner-radius preset.
+  /// Corner-radius preset.
   final DisplayCornerRadius? cornerRadius;
 
   @override
-  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) {
-    return <String, Object?>{
-      'type': 'image',
-      'uri': uri,
-      if (sizePreset != null) 'sizePreset': sizePreset!.wireName,
-      if (cornerRadius != null) 'cornerRadius': cornerRadius!.wireName,
-    };
-  }
+  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) => {
+    'type': 'image',
+    if (uri != null) 'uri': uri,
+    if (bytes != null) 'bytes': bytes,
+    if (sizePreset != null) 'sizePreset': sizePreset!.wireName,
+    if (cornerRadius != null) 'cornerRadius': cornerRadius!.wireName,
+    ..._flexJson(),
+  };
 }
 
-/// A tappable button rendered on the glasses display.
+/// A button. Group buttons with [DisplayButtonGroup] for the platform's
+/// focus and collapse behaviour.
 class DisplayButton extends DisplayNode {
   /// Creates a [DisplayButton].
   const DisplayButton({
     required this.label,
     this.style,
     this.iconName,
+    this.actionRole,
     this.onClick,
+    super.flexGrow,
+    super.flexShrink,
+    super.alignSelf,
   });
 
-  /// The button's text label.
+  /// Label.
   final String label;
 
-  /// Optional visual style.
+  /// Visual style.
   final DisplayButtonStyle? style;
 
-  /// Optional leading icon.
+  /// Leading icon.
   final DisplayIconName? iconName;
 
-  /// Optional click handler.
+  /// Role; the first [DisplayActionRole.primary] button gets initial focus.
+  final DisplayActionRole? actionRole;
+
+  /// Click handler.
   final void Function()? onClick;
 
   @override
-  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) {
-    return <String, Object?>{
-      'type': 'button',
-      'label': label,
-      if (style != null) 'style': style!.wireName,
-      if (iconName != null) 'iconName': iconName!.wireName,
-      if (callbacks?.registerTap(onClick) case final String id) 'onClickId': id,
-    };
-  }
+  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) => {
+    'type': 'button',
+    'label': label,
+    if (style != null) 'style': style!.wireName,
+    if (iconName != null) 'iconName': iconName!.wireName,
+    if (actionRole != null) 'actionRole': actionRole!.wireName,
+    if (callbacks?.registerTap(onClick) case final String id) 'onClickId': id,
+    ..._flexJson(),
+  };
 }
 
-/// A standalone built-in glyph rendered on the glasses display.
-class DisplayIcon extends DisplayNode {
-  /// Creates a [DisplayIcon].
-  const DisplayIcon(this.name);
+/// A row of buttons. Unfocused icon buttons collapse to their icon; the
+/// focused one shows its label.
+class DisplayButtonGroup extends DisplayNode {
+  /// Creates a [DisplayButtonGroup].
+  const DisplayButtonGroup({
+    required this.buttons,
+    this.alignment = DisplayButtonGroupAlignment.center,
+    super.flexGrow,
+    super.flexShrink,
+    super.alignSelf,
+  });
 
-  /// The glyph to render.
-  final DisplayIconName name;
+  /// The buttons.
+  final List<DisplayButton> buttons;
+
+  /// Alignment of the buttons.
+  final DisplayButtonGroupAlignment alignment;
 
   @override
-  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) {
-    return <String, Object?>{
-      'type': 'icon',
-      'iconName': name.wireName,
-    };
+  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) => {
+    'type': 'buttonGroup',
+    'alignment': alignment.wireName,
+    'buttons': buttons.map((b) => b.toJson(callbacks)).toList(growable: false),
+    ..._flexJson(),
+  };
+
+  @override
+  void _validate(List<DisplayValidationIssue> issues, {required bool isRoot}) {
+    if (buttons.isEmpty) {
+      issues.add(
+        const DisplayValidationIssue('DisplayButtonGroup has no buttons.'),
+      );
+    }
   }
 }
 
-/// A video player rendered on the glasses display.
+/// A built-in icon.
+class DisplayIcon extends DisplayNode {
+  /// Creates a [DisplayIcon].
+  const DisplayIcon(
+    this.name, {
+    this.style,
+    super.flexGrow,
+    super.flexShrink,
+    super.alignSelf,
+  });
+
+  /// The icon.
+  final DisplayIconName name;
+
+  /// Filled (default) or outline.
+  final DisplayIconStyle? style;
+
+  @override
+  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) => {
+    'type': 'icon',
+    'iconName': name.wireName,
+    if (style != null) 'style': style!.wireName,
+    ..._flexJson(),
+  };
+}
+
+/// A video player. Must be the root view.
 ///
-/// Playback transitions are delivered to [onPlaybackEvent] (e.g. when the
-/// video ends), mirroring Meta's `VideoPlayer.state` (Android) /
-/// `Display.onPlaybackEvent` (iOS).
+/// The Display SDK plays MP4 over https, at most 400 pixels per side and
+/// 70,000 pixels in total.
 class VideoPlayer extends DisplayNode {
-  /// Creates a [VideoPlayer] sourced from a remote [uri].
+  /// Creates a [VideoPlayer].
   const VideoPlayer(
     this.uri, {
     this.codec = DisplayVideoCodec.mp4,
     this.onPlaybackEvent,
   });
 
-  /// The video URL.
+  /// Video URL.
   final String uri;
 
-  /// The container codec hint.
+  /// Container format.
   final DisplayVideoCodec codec;
 
-  /// Optional playback-event handler.
+  /// Playback event handler.
   final void Function(DisplayPlaybackEvent)? onPlaybackEvent;
 
   @override
-  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) {
-    return <String, Object?>{
-      'type': 'videoPlayer',
-      'uri': uri,
-      'codec': codec.wireName,
-      if (callbacks?.registerPlayback(onPlaybackEvent) case final String id)
-        'onPlaybackEventId': id,
-    };
+  Map<String, Object?> toJson([DisplayCallbackTable? callbacks]) => {
+    'type': 'videoPlayer',
+    'uri': uri,
+    'codec': codec.wireName,
+    if (callbacks?.registerPlayback(onPlaybackEvent) case final String id)
+      'onPlaybackEventId': id,
+  };
+
+  @override
+  void _validate(List<DisplayValidationIssue> issues, {required bool isRoot}) {
+    if (!uri.startsWith('https://')) {
+      issues.add(
+        const DisplayValidationIssue('VideoPlayer URLs should use https.'),
+      );
+    }
   }
 }

@@ -1,4 +1,5 @@
-// HEVC (`hvc1`) → BGRA decoding pipeline.
+// HEVC (`hvc1`) -> BGRA decoding pipeline for the texture preview, plus
+// Annex-B helpers for the opt-in `videoFramesStream` payload.
 //
 // When `videoCodec: .hvc1` is selected on iOS, the MWDATCamera SDK emits
 // compressed `CMSampleBuffer`s carrying HEVC NAL units. This pipeline:
@@ -15,129 +16,117 @@
 //
 // Software-only fallback is requested at build time via
 // `kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder = false`
-// when the caller flags `softwareOnly` — that path is used in slice H
-// when background streaming is active (hardware decoders are killed by
+// when the caller flags `softwareOnly`, which the plugin does while
+// background streaming is enabled (hardware decoders are suspended by
 // the OS as soon as the app backgrounds).
 
-import Foundation
-import VideoToolbox
 import CoreMedia
 import CoreVideo
+import Foundation
+import VideoToolbox
 
-@MainActor
+/// HEVC decoder for the texture preview. Not thread-safe: the owner calls it
+/// from a single serial queue (`FramePump.frameQueue`).
 final class VTDecompressionPipeline {
-  /// Output pixel format. Matches the format the regular `.raw` capture
-  /// path produces so downstream texture code doesn't need to special-case.
+  /// Output pixel format handed to Flutter's external texture.
   private let outputPixelFormat: OSType = kCVPixelFormatType_32BGRA
 
   /// When true, build the `VTDecompressionSession` with hardware
-  /// acceleration disabled. Costs a bit of CPU but is required while the
-  /// app is backgrounded.
+  /// acceleration disabled. Costs some CPU but keeps decoding alive while
+  /// the app is backgrounded (iOS suspends hardware decoders).
   var softwareOnly: Bool = false {
     didSet { if oldValue != softwareOnly { invalidate() } }
   }
 
-  /// Session is rebuilt whenever the format description changes (e.g.
-  /// resolution change mid-stream). We compare by identity since
-  /// CoreMedia recycles `CMFormatDescriptionRef`s for identical descs.
+  /// Rebuilt whenever the format description changes (resolution ladder).
   private var session: VTDecompressionSession?
   private var formatDescription: CMFormatDescription?
+  /// After a (re)build, frames are skipped until the next keyframe so the
+  /// decoder never starts from a dependent frame.
+  private var awaitingKeyframe = true
+  private var consecutiveFailures = 0
+  private static let maxConsecutiveFailures = 3
 
   init() {}
 
   deinit {
-    if let session = session {
-      VTDecompressionSessionInvalidate(session)
-    }
+    if let session { VTDecompressionSessionInvalidate(session) }
   }
 
-  /// Releases the underlying `VTDecompressionSession`. The next
-  /// `decode(...)` call will rebuild it.
+  /// Releases the decoder. The next `decode(_:)` rebuilds it.
   func invalidate() {
-    if let session = session {
+    if let session {
       VTDecompressionSessionInvalidate(session)
       self.session = nil
     }
     formatDescription = nil
+    awaitingKeyframe = true
+    consecutiveFailures = 0
   }
 
-  /// Synchronously decodes one HEVC `CMSampleBuffer` to a BGRA
-  /// `CVPixelBuffer`. Returns `nil` when the session could not be
-  /// built or the decode itself failed; the caller should log and
-  /// continue rather than crash.
+  /// Decodes one HEVC sample buffer to a BGRA pixel buffer. Returns nil
+  /// while waiting for a keyframe or when decoding fails; after repeated
+  /// failures the session is rebuilt.
   func decode(_ sampleBuffer: CMSampleBuffer) -> CVPixelBuffer? {
-    guard let desc = CMSampleBufferGetFormatDescription(sampleBuffer) else {
-      return nil
+    guard let desc = CMSampleBufferGetFormatDescription(sampleBuffer) else { return nil }
+    guard ensureSession(for: desc), let session else { return nil }
+
+    if awaitingKeyframe {
+      guard Self.isKeyframe(sampleBuffer) else { return nil }
+      awaitingKeyframe = false
     }
-    if !ensureSession(for: desc) {
-      return nil
-    }
-    guard let session = session else { return nil }
 
     var decoded: CVPixelBuffer?
-    // Bit 0 of VTDecodeFrameFlags is "enable async decompression"; the
-    // Swift bridging name has changed across SDKs so we use the raw
-    // bitmask directly.
-    let flags = VTDecodeFrameFlags(rawValue: 1)
     var infoFlags = VTDecodeInfoFlags()
     let status = VTDecompressionSessionDecodeFrame(
       session,
       sampleBuffer: sampleBuffer,
-      flags: flags,
+      flags: [],
       infoFlagsOut: &infoFlags,
-      outputHandler: { _, _, buffer, _, _ in
-        decoded = buffer
-      },
+      outputHandler: { status, _, buffer, _, _ in
+        if status == noErr { decoded = buffer }
+      }
     )
-    if status != noErr {
-      print("[meta_wearables_dat_flutter] VTDecompressionSessionDecodeFrame " +
-        "failed status=\(status)")
+    if status != noErr || decoded == nil {
+      consecutiveFailures += 1
+      if consecutiveFailures >= Self.maxConsecutiveFailures {
+        print("[meta_wearables_dat_flutter] HEVC decode failed \(consecutiveFailures)x " +
+          "(status=\(status)); rebuilding decoder")
+        invalidate()
+      }
       return nil
     }
-    // Wait briefly for the async output handler. In practice the
-    // decoder runs on a dedicated thread and completes in a few hundred
-    // microseconds for HEVC at 720p.
-    VTDecompressionSessionWaitForAsynchronousFrames(session)
+    consecutiveFailures = 0
     return decoded
   }
 
-  /// (Re-)builds the `VTDecompressionSession` when the format
-  /// description changes. Returns `true` if a session is ready for
-  /// decoding.
+  /// (Re)builds the decompression session when the format changes.
   private func ensureSession(for desc: CMFormatDescription) -> Bool {
-    if let existing = formatDescription,
-       CFEqual(existing, desc),
-       session != nil {
-      return true
+    if let existing = formatDescription, session != nil {
+      if CFEqual(existing, desc) { return true }
+      if let session, VTDecompressionSessionCanAcceptFormatDescription(session, formatDescription: desc) {
+        formatDescription = desc
+        return true
+      }
     }
     if let stale = session {
       VTDecompressionSessionInvalidate(stale)
       session = nil
     }
     formatDescription = desc
+    awaitingKeyframe = true
 
     let dims = CMVideoFormatDescriptionGetDimensions(desc)
-    var imageBufferAttrs: [String: Any] = [
+    let imageBufferAttrs: [String: Any] = [
       kCVPixelBufferPixelFormatTypeKey as String: outputPixelFormat,
       kCVPixelBufferWidthKey as String: Int(dims.width),
       kCVPixelBufferHeightKey as String: Int(dims.height),
       kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
+      kCVPixelBufferMetalCompatibilityKey as String: true,
     ]
-    if softwareOnly {
-      imageBufferAttrs[
-        kCVPixelBufferOpenGLCompatibilityKey as String] = false
-    }
-
-    var spec: [String: Any] = [:]
-    if softwareOnly {
-      spec[
-        kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder
-          as String] = false
-    } else {
-      spec[
-        kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder
-          as String] = true
-    }
+    let spec: [String: Any] = [
+      kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: !softwareOnly
+    ]
 
     var newSession: VTDecompressionSession?
     let status = VTDecompressionSessionCreate(
@@ -146,11 +135,11 @@ final class VTDecompressionPipeline {
       decoderSpecification: spec as CFDictionary,
       imageBufferAttributes: imageBufferAttrs as CFDictionary,
       outputCallback: nil,
-      decompressionSessionOut: &newSession,
+      decompressionSessionOut: &newSession
     )
     if status != noErr {
-      print("[meta_wearables_dat_flutter] VTDecompressionSessionCreate " +
-        "failed status=\(status) software=\(softwareOnly)")
+      print("[meta_wearables_dat_flutter] VTDecompressionSessionCreate failed " +
+        "status=\(status) software=\(softwareOnly)")
       session = nil
       return false
     }
@@ -163,9 +152,7 @@ final class VTDecompressionPipeline {
   /// NAL units (i.e. each prefixed with the `00 00 00 01` start code).
   /// Returns `nil` when the format description does not carry HEVC
   /// parameter sets (e.g. for `kCMVideoCodecType_H264`).
-  static func annexBParameterSets(
-    from desc: CMFormatDescription,
-  ) -> Data? {
+  static func annexBParameterSets(from desc: CMFormatDescription) -> Data? {
     var count = 0
     let probe = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
       desc,
@@ -173,7 +160,7 @@ final class VTDecompressionPipeline {
       parameterSetPointerOut: nil,
       parameterSetSizeOut: nil,
       parameterSetCountOut: &count,
-      nalUnitHeaderLengthOut: nil,
+      nalUnitHeaderLengthOut: nil
     )
     if probe != noErr || count == 0 { return nil }
 
@@ -187,7 +174,7 @@ final class VTDecompressionPipeline {
         parameterSetPointerOut: &pointer,
         parameterSetSizeOut: &size,
         parameterSetCountOut: nil,
-        nalUnitHeaderLengthOut: nil,
+        nalUnitHeaderLengthOut: nil
       )
       if status == noErr, let pointer = pointer, size > 0 {
         out.append(contentsOf: [0x00, 0x00, 0x00, 0x01])
@@ -201,26 +188,27 @@ final class VTDecompressionPipeline {
   /// buffer's underlying `CMBlockBuffer` and returns them as an
   /// Annex-B encoded `Data` (start codes between NAL units instead of
   /// 4-byte length prefixes).
-  static func annexBNalBytes(
-    from sampleBuffer: CMSampleBuffer,
-  ) -> Data? {
+  static func annexBNalBytes(from sampleBuffer: CMSampleBuffer) -> Data? {
     guard let block = CMSampleBufferGetDataBuffer(sampleBuffer) else {
       return nil
     }
-    var totalLength = 0
-    var rawPointer: UnsafeMutablePointer<Int8>?
-    let status = CMBlockBufferGetDataPointer(
-      block,
-      atOffset: 0,
-      lengthAtOffsetOut: nil,
-      totalLengthOut: &totalLength,
-      dataPointerOut: &rawPointer,
-    )
-    if status != noErr || rawPointer == nil { return nil }
+    // The block buffer may be non-contiguous; copy it into one Data first.
+    let totalLength = CMBlockBufferGetDataLength(block)
+    guard totalLength > 0 else { return nil }
+    var source = Data(count: totalLength)
+    let copyStatus = source.withUnsafeMutableBytes { raw -> OSStatus in
+      guard let base = raw.baseAddress else { return -1 }
+      return CMBlockBufferCopyDataBytes(
+        block, atOffset: 0, dataLength: totalLength, destination: base)
+    }
+    if copyStatus != noErr { return nil }
+    return source.withUnsafeBytes { raw -> Data? in
+      guard let bytes = raw.bindMemory(to: UInt8.self).baseAddress else { return nil }
+      return annexB(from: bytes, totalLength: totalLength)
+    }
+  }
 
-    let bytes = UnsafeMutableRawPointer(rawPointer!).assumingMemoryBound(
-      to: UInt8.self,
-    )
+  private static func annexB(from bytes: UnsafePointer<UInt8>, totalLength: Int) -> Data? {
     var out = Data()
     out.reserveCapacity(totalLength + 16)
     var offset = 0
@@ -245,7 +233,7 @@ final class VTDecompressionPipeline {
     guard
       let attachments = CMSampleBufferGetSampleAttachmentsArray(
         sampleBuffer,
-        createIfNecessary: false,
+        createIfNecessary: false
       ) as? [[CFString: Any]],
       let first = attachments.first
     else {

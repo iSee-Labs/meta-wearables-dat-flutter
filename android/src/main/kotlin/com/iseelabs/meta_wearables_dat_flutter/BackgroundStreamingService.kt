@@ -46,6 +46,22 @@ class BackgroundStreamingService : Service() {
 
         /** Fixed within the host-app process; arbitrary positive integer. */
         const val NOTIFICATION_ID = 0x4D454441
+
+        /**
+         * Stops the service through onStartCommand. Calling stopService()
+         * right after startForegroundService() can crash with
+         * ForegroundServiceDidNotStartInTimeException; routing the stop
+         * through the service (as Meta's sample does) avoids that.
+         */
+        const val ACTION_STOP = "com.iseelabs.meta_wearables_dat_flutter.STOP_BACKGROUND_STREAMING"
+
+        /** Upper bound for the wake lock; the service re-acquires it on restart. */
+        private const val WAKE_LOCK_TIMEOUT_MS = 60 * 60 * 1000L
+
+        /** True while the service is in the foreground. */
+        @Volatile
+        var isRunning = false
+            private set
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -53,6 +69,18 @@ class BackgroundStreamingService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            isRunning = false
+            releaseWakeLock()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+            stopSelf()
+            return START_NOT_STICKY
+        }
         val args = intent?.extras
         val title = args?.getString(EXTRA_TITLE) ?: "Streaming in background"
         val text = args?.getString(EXTRA_TEXT)
@@ -71,12 +99,16 @@ class BackgroundStreamingService : Service() {
             iconResourceName = iconResourceName,
         )
         startForegroundCompat(notification)
+        isRunning = true
 
         acquireWakeLockIfNeeded()
-        return START_STICKY
+        // Not sticky: if the process dies the stream is gone anyway, so a
+        // restarted service would only show a stale notification.
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        isRunning = false
         releaseWakeLock()
         super.onDestroy()
     }
@@ -132,7 +164,19 @@ class BackgroundStreamingService : Service() {
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setContentIntent(launchIntent())
             .build()
+    }
+
+    /** Opens the host app when the notification is tapped. */
+    private fun launchIntent(): android.app.PendingIntent? {
+        val launch = packageManager.getLaunchIntentForPackage(packageName) ?: return null
+        return android.app.PendingIntent.getActivity(
+            this,
+            0,
+            launch,
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+        )
     }
 
     private fun acquireWakeLockIfNeeded() {
@@ -144,7 +188,7 @@ class BackgroundStreamingService : Service() {
             "MWDAT::StreamingWakeLock",
         )
         lock.setReferenceCounted(false)
-        lock.acquire(10 * 60 * 60 * 1000L)
+        lock.acquire(WAKE_LOCK_TIMEOUT_MS)
         wakeLock = lock
     }
 
