@@ -139,28 +139,28 @@ class _CompatibilityBanner extends StatelessWidget {
     final theme = Theme.of(context);
     final (text, icon, color) = switch (compatibility) {
       DeviceCompatibility.deviceUpdateRequired => (
-          'Update required on the glasses. Open Meta AI to install the '
-              'latest firmware.',
-          Icons.system_update_alt,
-          theme.colorScheme.errorContainer,
-        ),
+        'Update required on the glasses. Open Meta AI to install the '
+            'latest firmware.',
+        Icons.system_update_alt,
+        theme.colorScheme.errorContainer,
+      ),
       DeviceCompatibility.sdkUpdateRequired => (
-          'Update required in this app. Upgrade '
-              '`meta_wearables_dat_flutter` to a newer version.',
-          Icons.app_shortcut,
-          theme.colorScheme.errorContainer,
-        ),
+        'Update required in this app. Upgrade '
+            '`meta_wearables_dat_flutter` to a newer version.',
+        Icons.app_shortcut,
+        theme.colorScheme.errorContainer,
+      ),
       DeviceCompatibility.unknown => (
-          'Compatibility unknown. The SDK has not yet evaluated this '
-              'device.',
-          Icons.help_outline,
-          theme.colorScheme.surfaceContainerHighest,
-        ),
+        'Compatibility unknown. The SDK has not yet evaluated this '
+            'device.',
+        Icons.help_outline,
+        theme.colorScheme.surfaceContainerHighest,
+      ),
       DeviceCompatibility.compatible => (
-          'Compatible.',
-          Icons.check_circle,
-          theme.colorScheme.tertiaryContainer,
-        ),
+        'Compatible.',
+        Icons.check_circle,
+        theme.colorScheme.tertiaryContainer,
+      ),
     };
     return Container(
       padding: const EdgeInsets.all(12),

@@ -17,7 +17,7 @@ env:
   FLUTTER_VERSION: 3.47.x
   # Meta's DAT 1.0 binaries are built with Swift 6.3.3 (Xcode 26.4+).
   XCODE_VERSION: '26.6'
-  PACKAGES: . example samples/camera_access samples/display_access
+  PACKAGES: . example samples/camera_access samples/display_access samples/glasses_companion
 
 jobs:
   analyze-test:
@@ -112,7 +112,7 @@ jobs:
 
       - name: Build samples
         run: |
-          for s in samples/camera_access samples/display_access; do
+          for s in samples/camera_access samples/display_access samples/glasses_companion; do
             (cd "$s" && flutter build apk --debug) || exit 1
           done
 
@@ -149,9 +149,9 @@ jobs:
         run: flutter build ios --debug --simulator
 
       - name: Swift unit tests (RunnerTests)
-        # XCTest enumerates every Objective-C class at start-up. On iOS 17/18
-        # simulators that trips a Swift runtime failure inside MWDATCore, so
-        # native unit tests run on the newest simulator runtime.
+        # XCTest enumerates every Objective-C class at start-up. Below iOS 26
+        # that aborts inside MWDATCore (it weakly links iOS 26-only Network /
+        # WiFiAware types), so native unit tests run on the newest runtime.
         working-directory: example/ios
         run: |
           set -o pipefail
@@ -165,7 +165,7 @@ jobs:
 
       - name: Build samples (simulator)
         run: |
-          for s in samples/camera_access samples/display_access; do
+          for s in samples/camera_access samples/display_access samples/glasses_companion; do
             (cd "$s" && flutter build ios --debug --simulator) || exit 1
           done
 

@@ -54,9 +54,9 @@ class _AppState extends State<App> {
       await MetaWearablesDat.startRegistration();
     } on DatError catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Connect failed: ${e.code}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Connect failed: ${e.code}')));
     }
   }
 
@@ -65,17 +65,21 @@ class _AppState extends State<App> {
       await MetaWearablesDat.startUnregistration();
     } on DatError catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Disconnect failed: ${e.code}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Disconnect failed: ${e.code}')));
     }
   }
 
   Future<void> _requestCameraPermission() async {
     try {
-      final granted = await MetaWearablesDat.requestCameraPermission();
+      final status = await MetaWearablesDat.requestPermission(
+        Permission.camera,
+      );
       if (!mounted) return;
-      setState(() => _cameraPermissionGranted = granted);
+      setState(
+        () => _cameraPermissionGranted = status == PermissionStatus.granted,
+      );
     } on DatError catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -211,8 +215,9 @@ class _StatusCard extends StatelessWidget {
             _StatusRow(
               label: 'BT / Internet',
               value: permissionsGranted ? 'granted' : 'not granted',
-              icon:
-                  permissionsGranted ? Icons.check_circle : Icons.error_outline,
+              icon: permissionsGranted
+                  ? Icons.check_circle
+                  : Icons.error_outline,
             ),
             _StatusRow(
               label: 'Camera permission',
@@ -248,10 +253,7 @@ class _StatusRow extends StatelessWidget {
           Icon(icon, size: 18),
           const SizedBox(width: 8),
           Expanded(child: Text(label)),
-          Text(
-            value,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
         ],
       ),
     );

@@ -52,9 +52,9 @@
 
 	<!-- Begin required section for Meta Wearables Device Access Toolkit. -->
 	<!--
-	  MWDAT configuration for Developer Mode in SDK 0.6.0.
+	  MWDAT configuration for Developer Mode (verified against SDK 1.0.0).
 
-	  Despite what Meta's getting-started guide currently shows, SDK 0.6.0
+	  Despite what Meta's getting-started guide currently shows, the SDK
 	  validates the MWDAT dict for "Partial attestation configuration"
 	  and refuses with `RegistrationError.configurationInvalid` (raw 1)
 	  unless ALL FOUR keys are present and non-empty. The exact error
@@ -119,6 +119,7 @@
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
 		<string>external-accessory</string>
+		<string>processing</string>
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Needed to connect to Meta AI Glasses.</string>

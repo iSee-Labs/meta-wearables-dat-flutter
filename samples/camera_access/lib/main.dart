@@ -18,9 +18,7 @@ class CameraAccessApp extends StatelessWidget {
       title: 'Camera Access (Flutter)',
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1877F2),
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1877F2)),
       ),
       darkTheme: ThemeData(
         useMaterial3: true,

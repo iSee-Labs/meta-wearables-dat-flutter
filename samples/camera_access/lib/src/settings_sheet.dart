@@ -22,13 +22,12 @@ class StreamSettings {
     StreamQuality? quality,
     VideoCodec? codec,
     bool? backgroundStreaming,
-  }) =>
-      StreamSettings(
-        fps: fps ?? this.fps,
-        quality: quality ?? this.quality,
-        codec: codec ?? this.codec,
-        backgroundStreaming: backgroundStreaming ?? this.backgroundStreaming,
-      );
+  }) => StreamSettings(
+    fps: fps ?? this.fps,
+    quality: quality ?? this.quality,
+    codec: codec ?? this.codec,
+    backgroundStreaming: backgroundStreaming ?? this.backgroundStreaming,
+  );
 }
 
 /// Bottom-sheet that lets the user tweak FPS / quality / codec / background.
@@ -123,7 +122,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
               subtitle: Text(
                 isAndroid
                     ? 'Starts a foreground service with a persistent '
-                        'notification.'
+                          'notification.'
                     : 'Activates a background audio session.',
               ),
               value: _settings.backgroundStreaming,
@@ -175,11 +174,7 @@ class _DropdownRow<T> extends StatelessWidget {
     return Row(
       children: [
         Expanded(child: Text(label)),
-        DropdownButton<T>(
-          value: value,
-          items: items,
-          onChanged: onChanged,
-        ),
+        DropdownButton<T>(value: value, items: items, onChanged: onChanged),
       ],
     );
   }

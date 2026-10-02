@@ -11,17 +11,16 @@ screens with Material 3 styling.
 
 ## Setup
 
-1. Install Flutter `>=3.24.0` and ensure SPM is enabled:
-   ```bash
-   flutter config --enable-swift-package-manager
-   ```
-2. Place a GitHub PAT with `read:packages` scope into `local.properties`
-   (Android) under `github_token=...`, or export `GITHUB_TOKEN` in your
-   shell.
+1. Install Flutter `>=3.44.0` (Swift Package Manager is the default) and
+   Xcode 26.4 or newer. The iOS deployment target is 17.2.
+2. Android needs no extra setup: Meta's SDK resolves from Maven Central.
 3. Open `ios/Runner.xcodeproj` and set your team and bundle id.
 4. Update `ios/Runner/Info.plist`'s `MWDAT` dictionary with your
    `MetaAppID`, `ClientToken`, and `TeamID` from the Wearables Developer
-   Center. (Default values are placeholders for hardware-less testing.)
+   Center, and the matching meta-data in
+   `android/app/src/main/AndroidManifest.xml`. Builds made with plugin 1.0
+   need a new app version in the Developer Center. (Default values are
+   placeholders for hardware-less testing.)
 5. Run:
    ```bash
    cd samples/camera_access
@@ -42,4 +41,4 @@ screens with Material 3 styling.
 
 - Pure Dart UI (no SwiftUI / Compose).
 - One unified codebase across iOS and Android.
-- No audio capture, raw video codec only (no HEVC).
+- Raw and HEVC (`hvc1`) codecs are both selectable in Settings; audio capture is not shown.

@@ -30,6 +30,7 @@ class _AppState extends State<App> {
   StreamSubscription<RegistrationState>? _regSub;
   StreamSubscription<DeviceInfo?>? _deviceSub;
   StreamSubscription<DisplayState>? _displaySub;
+  StreamSubscription<DisplayError>? _displayErrorSub;
 
   @override
   void initState() {
@@ -41,8 +42,16 @@ class _AppState extends State<App> {
       if (mounted) setState(() => _activeDevice = d);
     });
     _displaySub = MetaWearablesDat.displayStateStream().listen((s) {
-      if (mounted) setState(() => _displayState = s);
+      if (!mounted) return;
+      setState(() {
+        _displayState = s;
+        // The Back gesture on the glasses ends the display session.
+        if (s == DisplayState.stopped) _displayActive = false;
+      });
     });
+    _displayErrorSub = MetaWearablesDat.displayErrorStream().listen(
+      (e) => _toast('Display error: ${e.code} (${e.message})'),
+    );
   }
 
   @override
@@ -50,12 +59,15 @@ class _AppState extends State<App> {
     _regSub?.cancel();
     _deviceSub?.cancel();
     _displaySub?.cancel();
+    _displayErrorSub?.cancel();
     super.dispose();
   }
 
   void _toast(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _requestPermissions() async {
@@ -107,10 +119,25 @@ class _AppState extends State<App> {
   }
 
   Future<void> _send(DisplayView view) async {
+    // Catch layout mistakes on the phone before they reach the glasses.
+    final issues = view.validate();
+    if (issues.any((i) => i.isFatal)) {
+      _toast('Invalid view: ${issues.first}');
+      return;
+    }
     try {
-      await MetaWearablesDat.sendDisplayView(view);
+      final warnings = await MetaWearablesDat.sendDisplayView(view);
+      if (warnings.isNotEmpty) _toast('Display warning: ${warnings.first}');
     } on DatError catch (e) {
       _toast('Send failed: ${e.code}');
+    }
+  }
+
+  Future<void> _clear() async {
+    try {
+      await MetaWearablesDat.clearDisplay();
+    } on DatError catch (e) {
+      _toast('Clear failed: ${e.code}');
     }
   }
 
@@ -227,8 +254,9 @@ class _AppState extends State<App> {
             children: [
               Expanded(
                 child: FilledButton.tonalIcon(
-                  onPressed:
-                      isRegistered && !_displayActive ? _startDisplay : null,
+                  onPressed: isRegistered && !_displayActive
+                      ? _startDisplay
+                      : null,
                   icon: const Icon(Icons.cast_connected),
                   label: const Text('Start display'),
                 ),
@@ -245,15 +273,26 @@ class _AppState extends State<App> {
           ),
           const SizedBox(height: 24),
           if (_displayActive) ...[
-            Text(
-              'On the glasses',
-              style: theme.textTheme.titleMedium,
-            ),
+            Text('On the glasses', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
-            FilledButton.icon(
-              onPressed: _showList,
-              icon: const Icon(Icons.list_alt),
-              label: const Text('Show tutorial list'),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _showList,
+                    icon: const Icon(Icons.list_alt),
+                    label: const Text('Show tutorial list'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _clear,
+                    icon: const Icon(Icons.layers_clear),
+                    label: const Text('Clear display'),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             Text(
@@ -320,8 +359,9 @@ class _StatusCard extends StatelessWidget {
             _StatusRow(
               label: 'BT / Internet',
               value: permissionsGranted ? 'granted' : 'not granted',
-              icon:
-                  permissionsGranted ? Icons.check_circle : Icons.error_outline,
+              icon: permissionsGranted
+                  ? Icons.check_circle
+                  : Icons.error_outline,
             ),
             _StatusRow(
               label: 'Display state',

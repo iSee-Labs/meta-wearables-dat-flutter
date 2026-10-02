@@ -44,7 +44,7 @@ class _MockKitScreenState extends State<MockKitScreen> {
   }
 
   Future<void> _pair() async {
-    await MetaWearablesDat.pairMockRayBanMeta();
+    await MetaWearablesDat.pairMockGlasses();
   }
 
   Future<void> _unpair(String uuid) async {
@@ -54,63 +54,63 @@ class _MockKitScreenState extends State<MockKitScreen> {
   Future<void> _powerOn(String uuid) async {
     await MetaWearablesDat.mockPowerOn(uuid);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Powered on')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Powered on')));
   }
 
   Future<void> _powerOff(String uuid) async {
     await MetaWearablesDat.mockPowerOff(uuid);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Powered off')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Powered off')));
   }
 
   Future<void> _don(String uuid) async {
     await MetaWearablesDat.mockDon(uuid);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Donned')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Donned')));
   }
 
   Future<void> _doff(String uuid) async {
     await MetaWearablesDat.mockDoff(uuid);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Doffed')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Doffed')));
   }
 
   Future<void> _fold(String uuid) async {
     await MetaWearablesDat.mockFold(uuid);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Folded')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Folded')));
   }
 
   Future<void> _unfold(String uuid) async {
     await MetaWearablesDat.mockUnfold(uuid);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Unfolded')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Unfolded')));
   }
 
   Future<void> _setFront(String uuid) async {
     await MetaWearablesDat.setMockCameraFacing(uuid, CameraFacing.front);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Camera facing: front')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Camera facing: front')));
   }
 
   Future<void> _grantCamera(String uuid) async {
     await MetaWearablesDat.setMockPermission(
-      MockPermission.camera,
-      MockPermissionStatus.granted,
+      Permission.camera,
+      PermissionStatus.granted,
     );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -120,8 +120,8 @@ class _MockKitScreenState extends State<MockKitScreen> {
 
   Future<void> _denyCameraRequest(String uuid) async {
     await MetaWearablesDat.setMockPermissionRequestResult(
-      MockPermission.camera,
-      MockPermissionStatus.denied,
+      Permission.camera,
+      PermissionStatus.denied,
     );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

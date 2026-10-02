@@ -52,7 +52,7 @@
 
 	<!-- Begin required section for Meta Wearables Device Access Toolkit. -->
 	<!--
-	  Developer Mode configuration for SDK 0.6.0. All four keys must be
+	  Developer Mode configuration (verified against SDK 1.0.0). All four keys must be
 	  present and non-empty - the SDK rejects "partial attestation"
 	  with RegistrationError.configurationInvalid (raw 1). With
 	  `MetaAppID = "0"`, the values of ClientToken / TeamID aren't
@@ -89,6 +89,7 @@
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
 		<string>external-accessory</string>
+		<string>processing</string>
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Needed to connect to Meta AI Glasses.</string>

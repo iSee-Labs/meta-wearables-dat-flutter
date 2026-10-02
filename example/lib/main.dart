@@ -88,51 +88,37 @@ class _MyAppState extends State<MyApp> {
     _messengerKey.currentState?.showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  Future<void> _requestAndroidPermissions() => _safeCall(
-        () async {
-          final granted = await MetaWearablesDat.requestAndroidPermissions();
-          _messengerKey.currentState?.showSnackBar(
-            SnackBar(content: Text('Android permissions: $granted')),
-          );
-        },
-        label: 'requestAndroidPermissions',
-      );
+  Future<void> _requestAndroidPermissions() => _safeCall(() async {
+    final granted = await MetaWearablesDat.requestAndroidPermissions();
+    _messengerKey.currentState?.showSnackBar(
+      SnackBar(content: Text('Android permissions: $granted')),
+    );
+  }, label: 'requestAndroidPermissions');
 
   Future<void> _connectGlasses() =>
       _safeCall(MetaWearablesDat.startRegistration, label: 'startRegistration');
 
   Future<void> _disconnectGlasses() => _safeCall(
-        MetaWearablesDat.startUnregistration,
-        label: 'startUnregistration',
-      );
+    MetaWearablesDat.startUnregistration,
+    label: 'startUnregistration',
+  );
 
-  Future<void> _requestCameraPermission() => _safeCall(
-        () async {
-          final status = await MetaWearablesDat.requestPermission(
-            Permission.camera,
-          );
-          _messengerKey.currentState?.showSnackBar(
-            SnackBar(content: Text('Camera permission: ${status.name}')),
-          );
-        },
-        label: 'requestPermission',
-      );
+  Future<void> _requestCameraPermission() => _safeCall(() async {
+    final status = await MetaWearablesDat.requestPermission(Permission.camera);
+    _messengerKey.currentState?.showSnackBar(
+      SnackBar(content: Text('Camera permission: ${status.name}')),
+    );
+  }, label: 'requestPermission');
 
-  Future<void> _startStreaming() => _safeCall(
-        () async {
-          final id = await MetaWearablesDat.startStreamSession();
-          setState(() => _textureId = id);
-        },
-        label: 'startStreamSession',
-      );
+  Future<void> _startStreaming() => _safeCall(() async {
+    final id = await MetaWearablesDat.startStreamSession();
+    setState(() => _textureId = id);
+  }, label: 'startStreamSession');
 
-  Future<void> _stopStreaming() => _safeCall(
-        () async {
-          await MetaWearablesDat.stopStreamSession();
-          setState(() => _textureId = null);
-        },
-        label: 'stopStreamSession',
-      );
+  Future<void> _stopStreaming() => _safeCall(() async {
+    await MetaWearablesDat.stopStreamSession();
+    setState(() => _textureId = null);
+  }, label: 'stopStreamSession');
 
   @override
   Widget build(BuildContext context) {
@@ -151,8 +137,10 @@ class _MyAppState extends State<MyApp> {
               children: [
                 Text('Registration: ${_registrationState.name}'),
                 Text('Active device: ${_activeDevice?.name ?? 'none'}'),
-                Text('Session: ${_sessionState.name}'
-                    '${_videoSize != null ? '  ${_videoSize!.width}x${_videoSize!.height}' : ''}'),
+                Text(
+                  'Session: ${_sessionState.name}'
+                  '${_videoSize != null ? '  ${_videoSize!.width}x${_videoSize!.height}' : ''}',
+                ),
                 const Divider(height: 32),
                 FilledButton(
                   onPressed: _requestAndroidPermissions,
@@ -163,8 +151,9 @@ class _MyAppState extends State<MyApp> {
                   children: [
                     Expanded(
                       child: FilledButton(
-                        onPressed:
-                            registering || registered ? null : _connectGlasses,
+                        onPressed: registering || registered
+                            ? null
+                            : _connectGlasses,
                         child: const Text('Connect glasses'),
                       ),
                     ),
@@ -214,10 +203,7 @@ class _MyAppState extends State<MyApp> {
                 ],
                 if (_lastError != null) ...[
                   const SizedBox(height: 16),
-                  Text(
-                    _lastError!,
-                    style: const TextStyle(color: Colors.red),
-                  ),
+                  Text(_lastError!, style: const TextStyle(color: Colors.red)),
                 ],
               ],
             ),
