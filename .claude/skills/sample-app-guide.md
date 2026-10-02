@@ -1,172 +1,155 @@
 ---
-description: Build a complete Flutter DAT app - registration, streaming, photo capture, recording, mock-device debug menu
-globs: example/**, samples/camera_access/**
+description: Build a complete Flutter DAT 1.0 app modelled on samples/camera_access and samples/display_access - registration, streaming, photo and frame capture, recording, devices, mock-device debug menu, display tutorials
+globs: example/**, samples/camera_access/**, samples/display_access/**, samples/glasses_companion/**
 ---
 
-# Sample App Guide (Flutter)
+# Sample App Guide (Flutter, DAT 1.0)
 
-Walks through building a Flutter app that connects to Meta glasses,
-streams video, captures photos, records, and exercises the Mock
-Device Kit.
+References:
 
-Reference: [`samples/camera_access/`](../../samples/camera_access/).
+- [`samples/camera_access/`](../../samples/camera_access/) — registration,
+  streaming, capture, recording, devices, Mock Device Kit menu.
+- [`samples/display_access/`](../../samples/display_access/) — display
+  sessions and step-by-step tutorial views.
+- [`samples/glasses_companion/`](../../samples/glasses_companion/) — DAT 1.0
+  features in one app: Meta-AI-initiated registration, diagnostics findings,
+  device picker with live `deviceStateStream`, update deep links, Mock Device
+  Kit controls (battery, thermal, charging, don, fold), hvc1 preview and
+  high-res photo, a display card with `DisplayButtonGroup`, and the
+  experimental inputs / motion / speech / voice modules.
+- [`example/`](../../example/) — minimal end-to-end app; also hosts
+  `integration_test/` and the Swift `RunnerTests`.
 
-## Architecture
+## Layout
 
 ```
 samples/camera_access/lib/
-├── main.dart                       # bootstrap + MaterialApp
+├── main.dart
 └── src/
-    ├── app.dart                    # navigation
-    ├── view_models/
-    │   ├── wearables_view_model.dart        # registration + devices
-    │   └── stream_session_view_model.dart   # streaming + capture
-    └── screens/
-        ├── home_screen.dart        # registration UI + entry points
-        ├── stream_screen.dart      # Texture + capture button
-        ├── recording_screen.dart   # videoFramesStream → file
-        ├── devices_screen.dart     # paired-device list + compatibility
-        ├── settings_sheet.dart     # FPS / quality / codec / background
-        └── mock_kit_screen.dart    # Mock Device Kit debug menu
+    ├── app.dart              # registration + active device, shared via InheritedWidget
+    ├── stream_screen.dart    # Texture, photo, captureStreamFrame, recording, errors
+    ├── devices_screen.dart   # devicesStream + compatibilityStream
+    ├── settings_sheet.dart   # quality / fps / codec / background
+    └── mock_kit_screen.dart  # Mock Device Kit debug menu
+
+samples/display_access/lib/
+├── main.dart
+└── src/
+    ├── app.dart              # registration, display session lifecycle
+    └── tutorials.dart        # DisplayView builders
 ```
 
-## SDK initialization
+Both samples use only the plugin (camera_access adds `path_provider`,
+`share_plus`). Do not add dependencies to the plugin itself.
 
-The plugin self-initializes; just import it in `main.dart`.
-
-```dart
-import 'package:flutter/material.dart';
-import 'package:meta_wearables_dat_flutter/meta_wearables_dat_flutter.dart';
-
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  runApp(const App());
-}
-```
-
-## Wearables view model
+## App shell
 
 ```dart
-class WearablesViewModel extends ChangeNotifier {
-  RegistrationState registration = RegistrationState.unregistered;
-  Device? activeDevice;
-  List<Device> devices = [];
-
-  WearablesViewModel() {
-    MetaWearablesDat.registrationStateStream().listen((s) {
-      registration = s; notifyListeners();
-    });
-    MetaWearablesDat.activeDeviceStream().listen((d) {
-      activeDevice = d; notifyListeners();
-    });
-    MetaWearablesDat.devicesStream().listen((list) {
-      devices = list; notifyListeners();
-    });
-  }
-
-  Future<void> register() => MetaWearablesDat.startRegistration();
-
-  Future<void> unregister() => MetaWearablesDat.startUnregistration();
-}
-```
-
-## Stream view model
-
-```dart
-class StreamSessionViewModel extends ChangeNotifier {
-  int? textureId;
-  StreamSessionState state = StreamSessionState.stopped;
-  Size? videoSize;
-
-  Future<void> start({int fps = 24, VideoCodec codec = VideoCodec.raw}) async {
-    textureId = await MetaWearablesDat.startStreamSession(
-      fps: fps, videoCodec: codec,
-    );
-    notifyListeners();
-  }
-
-  Future<void> stop() async {
-    await MetaWearablesDat.stopStreamSession();
-    textureId = null;
-    notifyListeners();
-  }
-
-  Future<Uint8List> capturePhoto() => MetaWearablesDat.capturePhoto();
-}
-```
-
-## Stream UI
-
-```dart
-class StreamScreen extends StatelessWidget {
-  final StreamSessionViewModel vm;
-  const StreamScreen(this.vm, {super.key});
+class _AppState extends State<App> {
+  RegistrationState _registration = RegistrationState.unavailable;
+  DeviceInfo? _activeDevice;
+  StreamSubscription<RegistrationState>? _regSub;
+  StreamSubscription<DeviceInfo?>? _deviceSub;
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(children: [
-        if (vm.textureId != null)
-          Center(child: Texture(textureId: vm.textureId!)),
-        Positioned(
-          bottom: 32, right: 16,
-          child: FloatingActionButton(
-            child: const Icon(Icons.camera_alt),
-            onPressed: () async {
-              final bytes = await vm.capturePhoto();
-              await showModalBottomSheet(
-                context: context,
-                builder: (_) => PhotoSheet(bytes),
-              );
-            },
-          ),
-        ),
-      ]),
-    );
+  void initState() {
+    super.initState();
+    _regSub = MetaWearablesDat.registrationStateStream().listen(
+        (s) { if (mounted) setState(() => _registration = s); });
+    _deviceSub = MetaWearablesDat.activeDeviceStream().listen(
+        (d) { if (mounted) setState(() => _activeDevice = d); });
+  }
+
+  @override
+  void dispose() {
+    _regSub?.cancel();
+    _deviceSub?.cancel();
+    super.dispose();
   }
 }
+```
+
+Register with `requestAndroidPermissions()` then `startRegistration()`;
+request `Permission.camera` via `requestPermission` before streaming.
+
+## Streaming
+
+```dart
+final id = await MetaWearablesDat.startStreamSession(
+  deviceUUID: devices.isNotEmpty ? devices.first.uuid : null,
+  config: StreamSessionConfig(
+    quality: settings.quality,
+    frameRate: StreamFrameRate.values.firstWhere((r) => r.value == settings.fps),
+    videoCodec: settings.codec,
+  ),
+);
+// Texture(textureId: id)
+```
+
+Listen to `streamSessionStateStream()`, `streamErrorStream()`,
+`deviceSessionErrorStream()` and `videoStreamSizeStream()`. Act on
+`error.recoveryAction` (e.g. `openFirmwareUpdate()`,
+`openDatGlassesAppUpdate()`). Always `stopStreamSession()` in `dispose`.
+
+## Capture
+
+```dart
+final photo = await MetaWearablesDat.capturePhoto();          // PhotoResult
+final frame = await MetaWearablesDat.captureStreamFrame(id,   // FrameData?
+    format: FrameFormat.png);
 ```
 
 ## Recording
 
-Subscribe to `videoFramesStream` and append payloads to a file:
-
 ```dart
-final file = File(p.join(dir.path, 'capture.h265'));
-final sink = file.openWrite();
-final sub = MetaWearablesDat.videoFramesStream().listen((frame) {
-  sink.add(frame.bytes);
+_framesSub = MetaWearablesDat.videoFramesStream().listen((frame) {
+  _sink?.add(frame.bytes);
 });
-// ...
-await sub.cancel();
-await sink.close();
+// stop: await _framesSub?.cancel(); await _sink?.close();
 ```
 
-The plugin emits raw NAL bytes for `VideoCodec.hvc1` (iOS) or
-I420 planar bytes for `VideoCodec.raw` on Android. Muxing to mp4 is
-the host app's concern (e.g. via `ffmpeg_kit_flutter`).
+With `VideoCodec.hvc1` the bytes are Annex-B HEVC (first frame has
+`isCodecConfig`); with `raw` use `frame.planes` / `pixelFormat`. Muxing to
+MP4 is the app's job.
 
-## Mock-device debug menu
+## Mock Device Kit menu
 
 ```dart
-ElevatedButton(
-  child: const Text('Pair Ray-Ban Meta'),
-  onPressed: () async {
-    await MetaWearablesDat.enableMockDevice();
-    await MetaWearablesDat.pairMockRaybanMeta();
-  },
-),
+await MetaWearablesDat.enableMockDevice();
+final mock = await MetaWearablesDat.pairMockGlasses(MockGlassesModel.rayBanMeta);
+await MetaWearablesDat.mockPowerOn(mock.uuid);
+await MetaWearablesDat.mockUnfold(mock.uuid);
+await MetaWearablesDat.mockDon(mock.uuid);
 ```
 
-Wire one button per Mock Kit action — that's the layout of
-`mock_kit_screen.dart`.
+One button per action; list devices with `mockDevicesStream()`.
 
-## Allowed dependencies
+## Display sample
 
-The sample uses a small list of helpers (`path_provider`, `share_plus`).
-Do not add dependencies to the plugin itself.
+```dart
+await MetaWearablesDat.startDisplaySession();
+MetaWearablesDat.displayStateStream().listen(onState); // Back gesture -> stopped
+await MetaWearablesDat.sendDisplayView(tutorialStep(i));
+await MetaWearablesDat.stopDisplaySession();
+```
 
-## Links
+## Companion sample
 
-- [`samples/camera_access/`](../../samples/camera_access/)
-- [`example/`](../../example/) — minimal end-to-end example
+- `lib/src/selection.dart`: one `ValueNotifier<String?>` holds the picked
+  device; `null` means automatic selection.
+- `lib/src/mock_setup.dart`: enable kit, `pairMockGlasses(model)`, power on,
+  unfold, don, then `setMockCameraFeed` with the bundled H.265 asset.
+- Experimental calls live in `lab_tab.dart` and `camera_tab.dart` behind
+  `// ignore_for_file: experimental_member_use` with a reason comment.
+- Treat `StreamSessionState.stopped` as "texture released": drop the texture
+  id when the device ends the stream.
+
+## Build checks
+
+```bash
+cd samples/camera_access && flutter analyze --fatal-infos
+cd samples/display_access && flutter analyze --fatal-infos
+cd samples/glasses_companion && flutter analyze --fatal-infos
+```
+
+CI builds all three samples for iOS simulator and Android debug.

@@ -10,29 +10,50 @@ sponsored by, or otherwise officially connected to Meta Platforms, Inc.
 Third-party software
 ================================================================================
 
-This product is a thin bridge over the following third-party software, which
-is linked as a binary dependency at build time and is NOT redistributed by
-this repository.
+This product is a thin bridge over Meta's Wearables Device Access Toolkit
+(DAT) 1.0.0. Meta's SDKs are closed-source binaries that are linked as
+dependencies at build time. They are NOT redistributed by this repository or
+by the published package, and they remain under Meta's own license terms
+(see the LICENSE file of each upstream repository and the Meta Wearables
+Developer Terms at https://wearables.developer.meta.com/terms). The MIT
+License of this product does not apply to them.
 
 --------------------------------------------------------------------------------
 Meta Wearables Device Access Toolkit (iOS)
 --------------------------------------------------------------------------------
 Source:   https://github.com/facebook/meta-wearables-dat-ios
+Version:  1.0.0 (Swift Package Manager, pinned exactly)
 Copyright (c) Meta Platforms, Inc. and affiliates.
-Licensed under the BSD-style license found in the LICENSE file of the upstream
-repository. The iOS plugin pulls `MWDATCore`, `MWDATCamera`, and (when mock is
-enabled) `MWDATMockDevice` via Swift Package Manager from the upstream URL
-above.
+Licensed under Meta's license terms found in the LICENSE file of the upstream
+repository. The iOS plugin links these products from the upstream package:
+
+  - MWDATCore
+  - MWDATCamera
+  - MWDATDisplay
+  - MWDATMockDevice
+  - MWDATInputs     (experimental)
+  - MWDATMotion     (experimental)
+  - MWDATSpeech     (experimental)
 
 --------------------------------------------------------------------------------
 Meta Wearables Device Access Toolkit (Android)
 --------------------------------------------------------------------------------
 Source:   https://github.com/facebook/meta-wearables-dat-android
+Version:  1.0.0 (Maven Central)
 Copyright (c) Meta Platforms, Inc. and affiliates.
-Licensed under the BSD-style license found in the LICENSE file of the upstream
-repository. The Android plugin pulls `com.meta.wearable:mwdat-core`,
-`com.meta.wearable:mwdat-camera`, and (when mock is enabled)
-`com.meta.wearable:mwdat-mockdevice` from GitHub Packages Maven.
+Licensed under Meta's license terms found in the LICENSE file of the upstream
+repository. The Android plugin depends on these Maven Central artifacts:
+
+  - com.meta.wearable:mwdat-core:1.0.0
+  - com.meta.wearable:mwdat-camera:1.0.0
+  - com.meta.wearable:mwdat-display:1.0.0
+  - com.meta.wearable:mwdat-mockdevice:1.0.0
+  - com.meta.wearable:mwdat-inputs:1.0.0   (experimental, optional)
+  - com.meta.wearable:mwdat-motion:1.0.0   (experimental, optional)
+  - com.meta.wearable:mwdat-speech:1.0.0   (experimental, optional)
+
+The experimental Android artifacts are left out when the host app sets
+`mwdat.experimental=false` in its Gradle properties.
 
 ================================================================================
 Trademarks

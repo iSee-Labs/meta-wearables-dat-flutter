@@ -5,6 +5,203 @@ All notable changes to this project will be documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.0
+
+Moves the plugin to Meta Wearables Device Access Toolkit (DAT) **1.0.0**,
+Meta's first stable, supported release. This is a breaking release; follow
+[`doc/migration_0.7_to_1.0.md`](doc/migration_0.7_to_1.0.md).
+
+### Highlights
+
+- Native pins: `facebook/meta-wearables-dat-ios` `exact: "1.0.0"` and
+  `com.meta.wearable:mwdat-*:1.0.0` from Maven Central.
+- Android SDK artifacts now come from Maven Central. No GitHub Packages
+  repository and no `GITHUB_TOKEN` are needed.
+- Typed, sealed error model with per-category reason enums and a suggested
+  `DatRecoveryAction`.
+- `hvc1` texture preview on Android (MediaCodec), matching iOS.
+- Live device state: battery, charging, wear, hinge, thermal level, link
+  state and compatibility.
+- Registrations started from the Meta AI app (`registrationRequestStream`).
+- `dumpDiagnostics()` returns a typed `DatDiagnostics` that validates
+  Info.plist / AndroidManifest configuration and reports held native
+  resources.
+- Bridges DAT 1.0's experimental modules (Inputs, Motion, Speech, voice
+  invocations, high-resolution photo, in-stream audio) behind
+  `@experimental`.
+
+### Breaking changes
+
+- Toolchain: Flutter >= 3.44.0, Dart ^3.8.0, Xcode 26.4+, iOS 17.2 minimum.
+  iOS resolves only through Swift Package Manager; CocoaPods is no longer
+  supported for this plugin.
+- Android: remove the GitHub Packages Maven repository and token
+  configuration from your Gradle files.
+- Developer Center: create a new app version for builds made with DAT 1.0.
+- `DatError` is now a sealed hierarchy. `DatError.code` is the specific case
+  name (for example `hingesClosed`); the former meaning of `code` (for
+  example `STREAM_ERROR`) moved to the new `DatError.category`. `details` is
+  now a `Map<String, Object?>`.
+- `SessionError` is replaced by `StreamError` (category `STREAM_ERROR`
+  instead of `SESSION_ERROR`). `SessionError` remains as a typedef.
+- `dumpDiagnostics()` returns `DatDiagnostics` instead of
+  `Map<String, Object?>` (the map is still available as `raw`).
+- `deviceSessionErrorStream()` emits `DeviceSessionError` instead of
+  `Object`.
+- `sendDisplayView()` returns `Future<List<String>>` (substitution warnings)
+  instead of `Future<void>`.
+- `stopStreamSession()` and `capturePhoto()` no longer take `deviceUUID`;
+  they act on the running stream.
+- `setMockCameraFeed()` and `setMockCapturedImage()` take a non-null
+  `filePath`.
+- `setMockPermission()` / `setMockPermissionRequestResult()` take
+  `Permission` / `PermissionStatus` (`MockPermission` and
+  `MockPermissionStatus` are deprecated typedefs of those).
+- State enums (`RegistrationState`, `StreamSessionState`,
+  `DeviceSessionState`, `DisplayState`) no longer carry an integer `value`;
+  state travels as a string on the platform channels. Use `fromWire`.
+- Default stream frame rate is 24 fps (was 30), matching the SDK default.
+- `MWDAT > DAMEnabled` (iOS) and `com.meta.wearable.mwdat.DAM_ENABLED`
+  (Android) are obsolete and ignored.
+
+### Added
+
+- `StreamSessionConfig` (`quality`, `frameRate` as `StreamFrameRate`,
+  `videoCodec`, `deviceKinds`, experimental `audio`) for
+  `startStreamSession(config: ...)`.
+- `streamErrorStream()`, `cameraStateStream()` (`CameraState`).
+- `RegistrationState.unregistering`,
+  `registrationErrorStream()`, `registrationRequestStream()` with
+  `RegistrationRequest.continueRegistration()` / `cancel()`.
+- `requestPermission(Permission)` and `checkPermissionStatus(Permission)`
+  returning `PermissionStatus`; `Permission.microphone`.
+- `openFirmwareUpdate()` and `openDatGlassesAppUpdate()`.
+- `getDevice(uuid)`, `getSessionDevice()`, `deviceStateStream(uuid)`.
+  `DeviceInfo` gains `type` (`DeviceType`), `linkState`, `compatibility`,
+  `batteryLevel`, `chargingState`, `donState`, `hingeState`,
+  `thermalLevel`, `supportsDisplay` and `isMock`. `DeviceKind.metaGlasses`.
+- `VideoFrame.pixelFormat` (`i420`, `nv12`, `bgra`), `planes`
+  (`VideoFramePlane`) and `isCodecConfig`.
+- `PhotoResult.format` reports the actual encoding.
+- Display: `clearDisplay()`, `stopDisplayVideo()`, `displayErrorStream()`,
+  `displayWarningStream()`, `DisplayButtonGroup`, `DisplayImage.bytes`,
+  `DisplayButton.actionRole`, `DisplayIcon.style`, `DisplayEdgeInsets`
+  (`FlexBox.paddingInsets`), `flexGrow` / `flexShrink` / `alignSelf` on every
+  node, `DisplayNode.validate()`, and the full `DisplayIconName` set (116
+  icons).
+- Errors: `RegistrationRequestError`, `NavigationError`, `StreamError`,
+  `PhotoError`, `DisplayError`, `InputsError`, `MotionError`,
+  `SpeechError`, `VoiceInvocationError`, `MockDeviceKitError`,
+  `DatArgumentError`, `DatPluginError`; `DatError.platformCase`,
+  `DatError.platform`, `DatError.recoveryAction` (`DatRecoveryAction`);
+  `DeviceSessionError.isTerminal` / `isWarning`; `StreamError.isFatal` /
+  `isWarning`.
+- `DatDiagnostics`: `findings` (`DatFinding` with `id`, `severity`,
+  `message`, `fix`), `errors`, `resources`, `isIdle`,
+  `experimentalModulesLinked`.
+- Mock Device Kit: `pairMockGlasses(MockGlassesModel)` returning
+  `DeviceInfo`, `mockTap`, `mockTapAndHold`, `setMockBatteryLevel`,
+  `setMockChargingState`, `setMockThermalLevel`, `startMockTestServer`,
+  `stopMockTestServer`, `sendMockDisplayClick`.
+- Diagnostics findings for Info.plist (iOS) and AndroidManifest (Android).
+- Tests and tooling: 125 Dart unit tests, Kotlin and Swift unit tests, Mock
+  Device Kit integration tests, channel-parity, version-agreement and
+  coverage-gate tools, and release / nightly CI workflows.
+
+### Changed
+
+- Plugin version tracks Meta's DAT version (major.minor); the patch number is
+  the plugin's own. `@experimental` APIs are excluded from semantic
+  versioning.
+- One device session per device is shared by camera, display and the
+  experimental capabilities; it stays open while any of them runs.
+- iOS: the stream session ends when the app enters the background unless
+  `enableBackgroundStreaming()` was called. Raw frames pause in the
+  background; `hvc1` continues.
+- `videoStreamSizeStream()` emits only when the size changes.
+- State streams replay the last value to new listeners.
+
+### Deprecated
+
+- `startStreamSession(fps:, quality:, videoCodec:, deviceKinds:)`: use
+  `config: StreamSessionConfig(...)`.
+- `streamSessionErrorStream()`: use `streamErrorStream()`.
+- `requestCameraPermission()` / `getCameraPermissionStatus()`: use
+  `requestPermission(Permission.camera)` /
+  `checkPermissionStatus(Permission.camera)`.
+- `pairMockRayBanMeta()`: use `pairMockGlasses(MockGlassesModel.rayBanMeta)`.
+- `MockPermission` / `MockPermissionStatus`: use `Permission` /
+  `PermissionStatus`.
+- The `is*` getters on error classes (for example `isHingesClosed`): switch
+  on `reason` instead. They now work; in 0.7 they always returned `false`.
+- `fromInt` on state enums: use `fromWire`.
+- `DatErrorCodes.session` and `DatErrorCodes.missingFragmentActivity`.
+- `FlexBox.cornerRadius`: not supported by the DAT Display SDK; ignored.
+
+### Removed
+
+- `pauseStreamSession()` and `resumeStreamSession()` (they never did
+  anything).
+- `sessionStateStream()`, `sessionErrorStream()` and the `SessionState`
+  typedef.
+- `startRegistration(appId:, urlScheme:)` parameters; values come from
+  Info.plist / AndroidManifest.
+- Sub-code constants in `DatErrorCodes` (for example
+  `DatErrorCodes.hingesClosed`); use the `*ErrorCase` enums. Category
+  constants remain.
+
+### Fixed
+
+- Typed `is*` getters on errors never matched.
+- Android: `handleUrl()` never called the SDK.
+- Android: `capturePhoto(format:)` was ignored.
+- Android: `enableMockDevice()` ignored `initiallyRegistered` and
+  `initialPermissionsGranted`; mock permission setters were no-ops.
+- Android: no `hvc1` preview.
+- Android: `STARTED` was mapped to `streaming`; default quality was `high`
+  while Dart defaulted to `medium`.
+- Android: the display was torn down on the initial `STOPPED` state.
+- iOS: `video_stream_size` was emitted on every frame.
+- iOS: `stopDisplaySession()` leaked its state listener token.
+- iOS: `getRegistrationState()` returned a raw ordinal.
+- Display DSL: `space*` alignments collapsed and the `large` corner radius
+  mapped to `medium`.
+- `dumpDiagnostics()` returned a different shape on each platform.
+- `deviceStateStream()` could hang `first` / `firstWhere` on cancel.
+
+### Experimental
+
+All APIs below are `@experimental`. Apps that use them can be tested in
+Developer Mode and Beta release channels but cannot ship to production
+release channels. They are also exported by
+`package:meta_wearables_dat_flutter/experimental.dart`.
+
+- Inputs: `startInputs(configuration:)`, `stopInputs`, `inputEventsStream`
+  (`NavInputEvent`, `SelectInputEvent`, `BackInputEvent`,
+  `ButtonInputEvent`, `CaptureInputEvent`, `DragInputEvent`),
+  `inputsStateStream`, `inputsErrorStream`.
+- Motion: `startMotion(samplingRate:)`, `stopMotion`, `motionSamplesStream`,
+  `motionStateStream`, `motionErrorStream`.
+- Speech: `startSpeech`, `stopSpeech`, `transcriptionStream`,
+  `speechStateStream`, `speechErrorStream`.
+- Voice invocations: `startVoiceInvocations`, `stopVoiceInvocations`,
+  `voiceInvocationsStream` (respond exactly once),
+  `voiceInvocationsStateStream`, `voiceInvocationErrorStream`.
+- High-resolution photo: `captureHighResPhoto(resolution:, quality:)`,
+  `photoTransferProgressStream`, `photoStateStream`, `photoErrorStream`.
+- In-stream audio: `StreamSessionConfig(audio: AudioStreamConfig(...))`,
+  `audioFramesStream`.
+- Mock simulators for inputs, speech, motion, voice invocations and
+  high-resolution photo capture.
+- Android: set `mwdat.experimental=false` in the app's
+  `android/gradle.properties` to leave out the `mwdat-inputs`,
+  `mwdat-motion` and `mwdat-speech` AARs; experimental calls then throw
+  `DatPluginError` with category `EXPERIMENTAL_NOT_LINKED`.
+
+### Migration
+
+See [`doc/migration_0.7_to_1.0.md`](doc/migration_0.7_to_1.0.md).
+
 ## 0.7.1
 
 Documentation-only release: README and getting-started guides now show

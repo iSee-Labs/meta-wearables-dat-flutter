@@ -1,135 +1,119 @@
 ---
-description: Render declarative UI on Ray-Ban Display glasses with the Display Access API (FlexBox/Text/Image/Button/Icon/VideoPlayer), callbacks, and DisplayState
-globs: lib/**/*.dart, lib/src/models/display/**, ios/**/MetaDisplayManager.swift, android/**/MetaDisplayManager.kt
+description: Render declarative UI on Meta Ray-Ban Display glasses (FlexBox/DisplayText/DisplayImage/DisplayButton/DisplayButtonGroup/DisplayIcon/VideoPlayer), callbacks, warnings, errors and DisplayState (DAT 1.0)
+globs: lib/**/*.dart, lib/src/models/display/**, ios/**/MetaDisplayManager.swift, ios/**/DisplayNode.swift, android/**/MetaDisplayManager.kt, android/**/DisplayNode.kt, samples/display_access/**
 ---
 
-# Display Access (Flutter)
+# Display Access (Flutter, DAT 1.0)
 
-Guide for rendering a declarative UI tree on Ray-Ban Display glasses via
-the `meta_wearables_dat_flutter` plugin. Wraps Meta DAT 0.7.0's
-`MWDATDisplay` (iOS) / `mwdat-display` (Android) module.
+Wraps `MWDATDisplay` (iOS) / `mwdat-display` (Android) for Meta Ray-Ban
+Display glasses (`DeviceInfo.supportsDisplay`).
 
-## Key concepts
+## Key facts
 
-- **`startDisplaySession({deviceUUID?})`** — creates a `DeviceSession`,
-  attaches the `Display` capability, and waits for it to start.
-- **`sendDisplayView(DisplayView view)`** — serializes a Dart component
-  tree to JSON, rebuilds it natively, and renders it on the glasses.
-- **`displayStateStream()`** — `DisplayState`: `starting | started |
-  stopping | stopped`. The display is ready once it reaches `started`.
-- **`stopDisplaySession()`** — detaches the display and tears down the
-  session.
-- **Callbacks** — `onTap` (FlexBox), `onClick` (Button), and
-  `onPlaybackEvent` (VideoPlayer) closures are assigned ids during
-  serialization and dispatched back from the `display_events` channel.
-  The callback table is rebuilt on every `sendDisplayView`, so ids only
-  resolve for the view currently on screen.
+- 600 x 600 canvas. Every `sendDisplayView` replaces the whole view.
+- Display dims after ~20 s and sleeps after ~25 s of inactivity.
+- The user's Back gesture ends the display session
+  (`displayStateStream` → `stopped`).
+- Display shares the device session with camera and experimental
+  capabilities (`DeviceSessionHub`).
 
-## Lifecycle
+## API
 
-```dart
-await MetaWearablesDat.requestAndroidPermissions(); // Android only
-await MetaWearablesDat.startRegistration();          // connect glasses
-await MetaWearablesDat.startDisplaySession();
-MetaWearablesDat.displayStateStream().listen((s) {
-  // starting | started | stopping | stopped
-});
-await MetaWearablesDat.sendDisplayView(myView);
-// ...later
-await MetaWearablesDat.stopDisplaySession();
-```
+| Call | Notes |
+|---|---|
+| `startDisplaySession({deviceUUID})` | acquires the shared session, adds the display, waits for `started` |
+| `sendDisplayView(DisplayView)` → `List<String>` | build warnings (unsupported values substituted) |
+| `clearDisplay()` | blank view |
+| `stopDisplayVideo()` | stops a playing `VideoPlayer` |
+| `stopDisplaySession()` | removes the display, releases the session |
+| `displayStateStream()` | `starting` / `started` / `stopping` / `stopped` |
+| `displayErrorStream()` | `DisplayError` (`DisplayErrorCase`) |
+| `displayWarningStream()` | warnings from native builders |
 
 ## Building a view
 
 ```dart
 final view = FlexBox(
   spacing: 12,
+  paddingInsets: const DisplayEdgeInsets.all(24),
   children: [
-    FlexBox(
-      padding: 24,
-      background: FlexBoxBackground.card,
-      onTap: () => print('card tapped'),
-      children: [
-        DisplayText('Oil change', style: DisplayTextStyle.heading),
-        DisplayText(
-          'Easy • 45 min',
-          style: DisplayTextStyle.meta,
-          color: DisplayTextColor.secondary,
-        ),
-        DisplayImage(
-          'https://example.com/oil.png',
-          sizePreset: DisplayImageSize.fill,
-          cornerRadius: DisplayCornerRadius.medium,
-        ),
-      ],
-    ),
-    FlexBox(
-      direction: DisplayDirection.row,
-      spacing: 8,
-      alignment: DisplayAlignment.center,
-      children: [
-        DisplayButton(label: 'Back', onClick: () => goBack()),
-        DisplayButton(
-          label: 'Next',
-          iconName: DisplayIconName.triangleRightVerticalLine,
-          onClick: () => goNext(),
-        ),
-      ],
-    ),
+    const DisplayText('Oil change', style: DisplayTextStyle.heading),
+    const DisplayText('Easy, 45 min',
+        style: DisplayTextStyle.meta, color: DisplayTextColor.secondary),
+    const DisplayImage('https://example.com/oil.png',
+        sizePreset: DisplayImageSize.fill,
+        cornerRadius: DisplayCornerRadius.medium),
+    DisplayButtonGroup(buttons: [
+      DisplayButton(label: 'Back', onClick: goBack),
+      DisplayButton(
+        label: 'Next',
+        iconName: DisplayIconName.triangleRightVerticalLine,
+        actionRole: DisplayActionRole.primary,
+        onClick: goNext,
+      ),
+    ]),
   ],
 );
-await MetaWearablesDat.sendDisplayView(view);
+for (final issue in view.validate()) debugPrint('$issue');
+final warnings = await MetaWearablesDat.sendDisplayView(view);
 ```
 
 ## Components
 
-| Dart model | Meta type | Notes |
-| --- | --- | --- |
-| `FlexBox` | `FlexBox` | `direction`, `spacing`, `padding`, `background`, `alignment`, `crossAlignment`, `wrap`, `flexGrow`, `onTap` |
+| Dart | Meta | Notes |
+|---|---|---|
+| `FlexBox` | `FlexBox` | `direction`, `spacing`, `padding` / `paddingInsets`, `background` (`none`/`card`), `alignment` / `crossAlignment` (incl. `spaceBetween/Around/Evenly`), `wrap`, `onTap`. `cornerRadius` deprecated (unsupported) |
 | `DisplayText` | `Text` | `style` (heading/body/meta), `color` (primary/secondary) |
-| `DisplayImage` | `Image` | remote `uri`, `sizePreset`, `cornerRadius` |
-| `DisplayButton` | `Button` | `label`, `style`, `iconName`, `onClick` |
-| `DisplayIcon` | `Icon` | built-in `DisplayIconName` glyph |
-| `VideoPlayer` | `VideoPlayer` | root-only; `uri` provider + `onPlaybackEvent` |
+| `DisplayImage` / `DisplayImage.bytes` | `Image` | https or `data:` URI, or PNG/JPEG bytes; `sizePreset`, `cornerRadius` |
+| `DisplayButton` | `Button` | `label`, `style`, `iconName`, `actionRole`, `onClick` |
+| `DisplayButtonGroup` | `ButtonGroup` | focus/collapse behaviour, `alignment` |
+| `DisplayIcon` | `Icon` | 116 `DisplayIconName`, `DisplayIconStyle` filled/outline |
+| `VideoPlayer` | `VideoPlayer` | root only; https MP4, max 400 px per side and 70,000 px total; `onPlaybackEvent` |
 
-## Video playback
+All nodes accept `flexGrow`, `flexShrink`, `alignSelf`.
+`DisplayNode.validate()` checks the tree against the SDK rules.
+
+## Video
 
 ```dart
-final view = VideoPlayer(
+await MetaWearablesDat.sendDisplayView(VideoPlayer(
   'https://example.com/clip.mp4',
-  onPlaybackEvent: (event) {
-    if (event.type == DisplayPlaybackEventType.ended) showNextStep();
+  onPlaybackEvent: (e) {
+    if (e.type == DisplayPlaybackEventType.ended) showNext();
   },
-);
-await MetaWearablesDat.sendDisplayView(view);
+));
 ```
 
-`VideoPlayer` is a root view, not a nestable component. The plugin starts
-playback automatically once the video is sent.
+`DisplayPlaybackEventType`: `started`, `paused`, `ended`, `stopped`,
+`error`, `unknown`.
 
-## Bridge architecture
+## Bridge internals
 
-- Dart `DisplayNode.toJson()` emits a plain map with `onTapId` /
-  `onClickId` / `onPlaybackEventId` keys; the `DisplayCallbackTable`
-  maps those ids back to closures.
-- Native `MetaDisplayManager` (Swift / Kotlin) rebuilds the SDK DSL from
-  the JSON, wires each callback to emit `{callbackId, type, event?}` on
-  the `display_events` channel, and forwards `DisplayState` on
-  `display_state`.
-- One display session per device; the camera and display sessions are
-  independent.
+- `DisplayNode.toJson(callbacks)` embeds `onTapId` / `onClickId` /
+  `onPlaybackEventId`; `DisplayCallbackTable` resolves them. Ids are
+  rebuilt on every send.
+- Native `DisplayNode` builders rebuild the SDK DSL and emit
+  `{callbackId, type, event?}` on `display_events`.
+- iOS `IconName` raw values are snake_case; `DisplayNode.swift` converts
+  from camelCase. Regenerate Dart names with
+  `dart run tool/gen_icon_names.dart` (source `tool/display_icons.json`).
+- Android: builders take named arguments; never call `display.stop()`
+  (NPE risk) — detach with `session.removeDisplay()`. The display
+  `StateFlow` starts at `STOPPED`; only a STOPPED after leaving STOPPED
+  is terminal.
 
 ## Gotchas
 
-- Requires DAT 0.7.0+ and a Display-capable device (Ray-Ban Display).
-- `sendDisplayView` throws if no session is active — call
-  `startDisplaySession()` first.
-- New `DeviceSessionError.datAppOnTheGlassesUpdateRequired` surfaces when
-  the on-glasses DAT app needs an update.
+- `sendDisplayView` before `startDisplaySession` throws `DisplayError`
+  (`notStarted`).
+- `DeviceSessionErrorCase.datAppOnTheGlassesUpdateRequired` →
+  `openDatGlassesAppUpdate()`.
+- Mock: `sendMockDisplayClick` may not fire `onClick` (identifier format
+  undocumented). Use `startMockTestServer()` and the Chrome "Meta Ray-Ban
+  Display Simulator" preview.
 
 ## Links
 
 - [`doc/display_access.md`](../../doc/display_access.md)
-- Sample app: [`samples/display_access/`](../../samples/display_access/)
-- Meta Display docs:
-  <https://wearables.developer.meta.com/docs/develop/>
+- Sample: [`samples/display_access/`](../../samples/display_access/)
+- Meta docs: <https://wearables.developer.meta.com/docs/develop/>
