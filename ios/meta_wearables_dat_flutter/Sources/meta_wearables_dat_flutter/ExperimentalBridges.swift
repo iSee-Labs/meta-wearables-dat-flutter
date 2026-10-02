@@ -54,7 +54,7 @@ final class InputsBridge {
   static let owner = "inputs"
   private let hub: DeviceSessionHub
   let eventsSink = EventSinkHandler()
-  let stateSink = EventSinkHandler()
+  let stateSink = EventSinkHandler(replaysLast: true)
   let errorSink = EventSinkHandler()
   private var active = false
   private var eventsTask: Task<Void, Never>?
@@ -232,7 +232,7 @@ final class MotionBridge {
   static let owner = "motion"
   private let hub: DeviceSessionHub
   let samplesSink = EventSinkHandler()
-  let stateSink = EventSinkHandler()
+  let stateSink = EventSinkHandler(replaysLast: true)
   let errorSink = EventSinkHandler()
   private var active = false
   private var samplesTask: Task<Void, Never>?
@@ -364,7 +364,7 @@ final class SpeechBridge {
   static let owner = "speech"
   private let hub: DeviceSessionHub
   let transcriptionsSink = EventSinkHandler()
-  let stateSink = EventSinkHandler()
+  let stateSink = EventSinkHandler(replaysLast: true)
   let errorSink = EventSinkHandler()
   private var active = false
   private let tokens = ListenerTokenBag()
@@ -465,7 +465,7 @@ final class SpeechBridge {
 @MainActor
 final class VoiceInvocationsBridge {
   let invocationsSink = EventSinkHandler()
-  let stateSink = EventSinkHandler()
+  let stateSink = EventSinkHandler(replaysLast: true)
   let errorSink = EventSinkHandler()
   private var stream: VoiceInvocationsStream?
   private let tokens = ListenerTokenBag()

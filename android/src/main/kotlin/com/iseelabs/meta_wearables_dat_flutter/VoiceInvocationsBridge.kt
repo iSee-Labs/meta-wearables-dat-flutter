@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
 
 class VoiceInvocationsBridge(private val scope: CoroutineScope) {
     val invocationsSink = EventSinkHandler()
-    val stateSink = EventSinkHandler()
+    val stateSink = EventSinkHandler(replaysLast = true)
     val errorSink = EventSinkHandler()
 
     private var stream: VoiceInvocationsStream? = null

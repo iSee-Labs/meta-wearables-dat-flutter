@@ -11,6 +11,17 @@ import Flutter
 import Foundation
 
 final class EventSinkHandler: NSObject, FlutterStreamHandler {
+  /// State channels replay their latest value to each new listener, so a
+  /// listener that subscribes after a transition still sees the current
+  /// state.
+  let replaysLast: Bool
+  private var last: Any?
+
+  init(replaysLast: Bool = false) {
+    self.replaysLast = replaysLast
+    super.init()
+  }
+
   var onSinkChange: ((FlutterEventSink?, Any?) -> Void)? {
     didSet { onSinkChange?(sink, arguments) }
   }
@@ -22,6 +33,7 @@ final class EventSinkHandler: NSObject, FlutterStreamHandler {
   {
     self.arguments = arguments
     sink = events
+    if replaysLast, let last { events(last) }
     onSinkChange?(events, arguments)
     return nil
   }
@@ -35,6 +47,7 @@ final class EventSinkHandler: NSObject, FlutterStreamHandler {
 
   /// Emits `value` when a listener is attached; a no-op otherwise.
   func send(_ value: Any?) {
+    if replaysLast { last = value }
     sink?(value ?? NSNull())
   }
 

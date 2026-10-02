@@ -257,8 +257,23 @@ final class MetaMockDeviceManager {
 
   func startTestServer(port: Int) async throws -> Int {
     if !kit.isEnabled { kit.enable(config: config) }
+    let kit = self.kit
+    let requested = UInt16(clamping: port)
     do {
-      return Int(try await kit.startTestServer(port: UInt16(clamping: port)))
+      // The server can wait indefinitely (for example on Local Network
+      // access); never let a test-only helper hang the caller.
+      return try await withThrowingTaskGroup(of: Int.self) { group in
+        group.addTask { Int(try await kit.startTestServer(port: requested)) }
+        group.addTask {
+          try await Task.sleep(nanoseconds: 10_000_000_000)
+          throw WireError(
+            category: WireCategory.mock, caseName: "testServerUnavailable",
+            message: "The mock test server did not start within 10 s (iOS Simulator only; check Local Network access).")
+        }
+        let port = try await group.next()!
+        group.cancelAll()
+        return port
+      }
     } catch {
       throw WireErrors.from(error, fallbackCategory: WireCategory.mock)
     }

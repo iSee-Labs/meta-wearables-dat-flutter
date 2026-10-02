@@ -240,8 +240,28 @@ struct DisplayNodeBuilder {
 
   private mutating func iconName(_ value: String?) -> IconName? {
     guard let value else { return nil }
-    if let name = IconName(rawValue: value) { return name }
+    if let name = IconName(rawValue: Self.iconRawValue(value)) ?? IconName(rawValue: value) { return name }
     warnings.append("Unknown icon '\(value)' ignored.")
     return nil
+  }
+
+  /// The SDK's `IconName` raw values are snake_case (`checkmark_circle`,
+  /// `circle_8_rays_large`, `arrow_u_left`); the wire uses lowerCamelCase.
+  static func iconRawValue(_ camel: String) -> String {
+    let chars = Array(camel)
+    var out = ""
+    for (i, c) in chars.enumerated() {
+      if i > 0 {
+        let prev = chars[i - 1]
+        let next: Character? = i + 1 < chars.count ? chars[i + 1] : nil
+        if c.isUppercase && (prev.isLowercase || prev.isNumber || (prev.isUppercase && next?.isLowercase == true)) {
+          out.append("_")
+        } else if c.isNumber && prev.isLetter {
+          out.append("_")
+        }
+      }
+      out.append(contentsOf: c.lowercased())
+    }
+    return out
   }
 }

@@ -12,13 +12,13 @@ import kotlinx.coroutines.CoroutineScope
 fun createExperimentalCapabilities(hub: DeviceSessionHub, scope: CoroutineScope): ExperimentalCapabilities =
     object : ExperimentalCapabilities {
         override val linked = false
-        override val inputsState = EventSinkHandler()
+        override val inputsState = EventSinkHandler(replaysLast = true)
         override val inputsEvents = EventSinkHandler()
         override val inputsErrors = EventSinkHandler()
-        override val motionState = EventSinkHandler()
+        override val motionState = EventSinkHandler(replaysLast = true)
         override val motionSamples = EventSinkHandler()
         override val motionErrors = EventSinkHandler()
-        override val speechState = EventSinkHandler()
+        override val speechState = EventSinkHandler(replaysLast = true)
         override val speechTranscriptions = EventSinkHandler()
         override val speechErrors = EventSinkHandler()
 

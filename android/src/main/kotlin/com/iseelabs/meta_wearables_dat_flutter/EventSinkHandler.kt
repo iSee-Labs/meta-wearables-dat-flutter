@@ -11,8 +11,21 @@ import android.os.Handler
 import android.os.Looper
 import io.flutter.plugin.common.EventChannel
 
-class EventSinkHandler : EventChannel.StreamHandler {
+class EventSinkHandler(
+    /**
+     * State channels replay their latest value to each new listener, so a
+     * listener that subscribes after a transition still sees the current
+     * state.
+     */
+    private val replaysLast: Boolean = false,
+) : EventChannel.StreamHandler {
     private val main = Handler(Looper.getMainLooper())
+
+    @Volatile
+    private var last: Any? = null
+
+    @Volatile
+    private var hasLast = false
 
     @Volatile
     var sink: EventChannel.EventSink? = null
@@ -28,6 +41,7 @@ class EventSinkHandler : EventChannel.StreamHandler {
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
         sink = events
+        if (replaysLast && hasLast) events.success(last)
         onSinkChange?.invoke(events)
     }
 
@@ -37,6 +51,10 @@ class EventSinkHandler : EventChannel.StreamHandler {
     }
 
     fun send(value: Any?) {
+        if (replaysLast) {
+            last = value
+            hasLast = true
+        }
         if (sink == null) return
         if (Looper.myLooper() == Looper.getMainLooper()) {
             sink?.success(value)

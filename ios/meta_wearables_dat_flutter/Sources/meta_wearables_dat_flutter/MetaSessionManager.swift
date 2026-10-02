@@ -45,12 +45,12 @@ final class MetaSessionManager {
 
   let stateSink = EventSinkHandler()
   let errorSink = EventSinkHandler()
-  let cameraStateSink = EventSinkHandler()
+  let cameraStateSink = EventSinkHandler(replaysLast: true)
   let sizeSink = EventSinkHandler()
   let framesSink = EventSinkHandler()
   let audioSink = EventSinkHandler()
   let photoProgressSink = EventSinkHandler()
-  let photoStateSink = EventSinkHandler()
+  let photoStateSink = EventSinkHandler(replaysLast: true)
   let photoErrorSink = EventSinkHandler()
 
   /// Software HEVC decoding while background streaming is enabled.
@@ -217,6 +217,7 @@ final class MetaSessionManager {
       ResourceLedger.shared.release(.cameras)
     }
     hqPhotoStarted = false
+    lastPhotoState = .stopped
     failPendingPhotos(WireError(
       category: WireCategory.capture, caseName: "sessionStopped",
       message: "The stream stopped during the capture."))
@@ -294,7 +295,7 @@ final class MetaSessionManager {
       photo.start()
       hqPhotoStarted = true
       let deadline = Date().addingTimeInterval(10)
-      while photoState(photo) != .started, Date() < deadline {
+      while lastPhotoState != .started, Date() < deadline {
         try await Task.sleep(nanoseconds: 100_000_000)
       }
     }
@@ -312,7 +313,6 @@ final class MetaSessionManager {
   }
 
   private var lastPhotoState: PhotoState = .stopped
-  private func photoState(_ photo: Photo) -> PhotoState { lastPhotoState }
 
   private func subscribe(photo: Photo) {
     photo.statePublisher.listen { [weak self] state in

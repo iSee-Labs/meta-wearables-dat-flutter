@@ -65,11 +65,11 @@ class MetaSessionManager(
 
     val stateSink = EventSinkHandler()
     val errorSink = EventSinkHandler()
-    val cameraStateSink = EventSinkHandler()
+    val cameraStateSink = EventSinkHandler(replaysLast = true)
     val sizeSink = EventSinkHandler()
     val framesSink = EventSinkHandler()
     val audioSink = EventSinkHandler()
-    val photoStateSink = EventSinkHandler()
+    val photoStateSink = EventSinkHandler(replaysLast = true)
     val photoProgressSink = EventSinkHandler()
     val photoErrorSink = EventSinkHandler()
 
