@@ -1,0 +1,59 @@
+name: Nightly
+
+# Wider device matrix and an early warning for Flutter beta. Failures here
+# do not block PRs; they are triaged before the next release.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  integration-android:
+    name: Android API ${{ matrix.api }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [31, 34, 35]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.x
+          channel: stable
+          cache: true
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          working-directory: example
+          script: flutter test integration_test/plugin_test.dart -d emulator-5554
+
+  flutter-beta:
+    name: Flutter beta canary
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.6'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: beta
+      - run: flutter pub get && flutter analyze && flutter test
+      - name: Build example (iOS simulator, Android debug)
+        working-directory: example
+        run: flutter build ios --debug --simulator && flutter build apk --debug
