@@ -18,9 +18,8 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   final harness = MockHarness();
 
-  setUpAll(() async {
-    if (Platform.isAndroid) await MetaWearablesDat.requestAndroidPermissions();
-  });
+  // Mock Device Kit initialises the SDK itself, so the tests do not need
+  // the Android runtime permission dialog.
 
   tearDown(harness.teardown);
 
@@ -266,11 +265,12 @@ void main() {
       // The mock only accepts injections once its recogniser is listening,
       // which can trail the `started` state slightly.
       await waitFor(() async {
-        if (!received)
+        if (!received) {
           await MetaWearablesDat.simulateMockTranscription(
             uuid,
             'hello glasses',
           );
+        }
         await Future<void>.delayed(const Duration(milliseconds: 300));
         return received;
       }, reason: 'transcription never arrived');
@@ -286,8 +286,9 @@ void main() {
       // returns null until a client is connected.
       await waitFor(
         () async {
-          if (!invoked)
+          if (!invoked) {
             await MetaWearablesDat.simulateMockVoiceInvocation(uuid);
+          }
           await Future<void>.delayed(const Duration(milliseconds: 500));
           return invoked;
         },

@@ -4,7 +4,7 @@
 //        display.state -> wait STARTED (Android displays start on add)
 // send:  JSON -> DisplayNodeBuilder -> display.sendContent { } (replaces
 //        the whole view and every tap handler)
-// stop:  cancel collectors -> display.stop() -> session.removeDisplay()
+// stop:  cancel collectors -> session.removeDisplay()
 //        -> hub.release
 
 package com.iseelabs.meta_wearables_dat_flutter
@@ -62,11 +62,17 @@ class MetaDisplayManager(
         display = newDisplay
         ResourceLedger.acquire(ResourceLedger.Kind.DISPLAYS)
         stateJob = scope.launch {
+            // The state flow starts at STOPPED before the device answers, so a
+            // stop only counts as terminal once the display has left STOPPED.
+            var hasLeftStopped = false
             newDisplay.state.collect { state ->
+                if (state != DisplayState.STOPPED && state != DisplayState.CLOSED) hasLeftStopped = true
+                if (!hasLeftStopped && state == DisplayState.STOPPED) return@collect
                 lastState = state
                 stateSink.send(WireCodec.displayState(state))
                 // Back (two-finger temple tap) or the device ended the display.
-                if ((state == DisplayState.STOPPED || state == DisplayState.CLOSED) && display === newDisplay) {
+                val terminal = state == DisplayState.STOPPED || state == DisplayState.CLOSED
+                if (terminal && display === newDisplay) {
                     clear(releaseHub = true)
                 }
             }
@@ -160,10 +166,9 @@ class MetaDisplayManager(
         stateJob?.cancel()
         stateJob = null
         ResourceLedger.release(ResourceLedger.Kind.LISTENERS)
-        try {
-            d.stop()
-        } catch (_: Throwable) {
-        }
+        // Detach through the session only, as Meta's DisplayAccess sample
+        // does. Calling display.stop() first clears the display's internal
+        // scope and the SDK can then crash on a late device update.
         hub.session?.removeDisplay()
         ResourceLedger.release(ResourceLedger.Kind.DISPLAYS)
         if (lastState != DisplayState.STOPPED) {

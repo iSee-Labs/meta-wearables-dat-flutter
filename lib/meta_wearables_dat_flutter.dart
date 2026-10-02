@@ -189,20 +189,53 @@ abstract final class MetaWearablesDat {
 
   /// Live state (battery, charging, wear, hinge, thermal, link) of
   /// [deviceUuid]. Emits the current snapshot first.
-  static Stream<DeviceInfo> deviceStateStream(String deviceUuid) async* {
-    final controller = StreamController<DeviceInfo>();
-    final sub = _p
-        .deviceStateChanges()
-        .where((d) => d.uuid == deviceUuid)
-        .listen(controller.add, onError: controller.addError);
-    try {
-      final current = await _p.getDevice(deviceUuid);
-      if (current != null) yield current;
-      yield* controller.stream;
-    } finally {
-      await sub.cancel();
-      await controller.close();
-    }
+  static Stream<DeviceInfo> deviceStateStream(String deviceUuid) {
+    // A plain controller instead of `async*`: teardown must not await
+    // anything, because `first`/`firstWhere` wait for cancel to finish.
+    late final StreamController<DeviceInfo> controller;
+    // Cancelled in onCancel.
+    // ignore: cancel_subscriptions
+    StreamSubscription<DeviceInfo>? changes;
+    controller = StreamController<DeviceInfo>(
+      onListen: () {
+        // Live updates that arrive before the snapshot are held back so the
+        // snapshot never overwrites a newer value.
+        List<DeviceInfo>? pending = [];
+        changes = _p
+            .deviceStateChanges()
+            .where((d) => d.uuid == deviceUuid)
+            .listen(
+              (d) => pending != null ? pending!.add(d) : controller.add(d),
+              onError: controller.addError,
+            );
+        _p
+            .getDevice(deviceUuid)
+            .then(
+              (current) {
+                if (controller.isClosed) return;
+                final held = pending!;
+                pending = null;
+                if (current != null && held.isEmpty) controller.add(current);
+                held.forEach(controller.add);
+              },
+              onError: (Object error, StackTrace stack) {
+                if (controller.isClosed) return;
+                final held = pending ?? const <DeviceInfo>[];
+                pending = null;
+                controller.addError(error, stack);
+                held.forEach(controller.add);
+              },
+            );
+      },
+      onPause: () => changes?.pause(),
+      onResume: () => changes?.resume(),
+      onCancel: () {
+        final sub = changes;
+        changes = null;
+        unawaited(sub?.cancel());
+      },
+    );
+    return controller.stream;
   }
 
   /// The device the SDK would pick automatically, or `null`.
