@@ -133,6 +133,20 @@ class _AppState extends State<App> {
     }
   }
 
+  /// Prints the plugin's configuration findings and held native resources.
+  Future<void> _dumpDiagnostics() async {
+    final diagnostics = await MetaWearablesDat.dumpDiagnostics();
+    debugPrint('[display_access] $diagnostics');
+    for (final finding in diagnostics.findings) {
+      debugPrint('[display_access] $finding');
+    }
+    _toast(
+      diagnostics.findings.isEmpty
+          ? 'Configuration OK (details in console)'
+          : '${diagnostics.findings.length} findings (see console)',
+    );
+  }
+
   Future<void> _clear() async {
     try {
       await MetaWearablesDat.clearDisplay();
@@ -224,10 +238,24 @@ class _AppState extends State<App> {
             stepIndex: _stepIndex,
           ),
           const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: _requestPermissions,
-            icon: const Icon(Icons.bluetooth),
-            label: const Text('Request Bluetooth / Internet'),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _requestPermissions,
+                  icon: const Icon(Icons.bluetooth),
+                  label: const Text('Request BT / Net'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _dumpDiagnostics,
+                  icon: const Icon(Icons.bug_report),
+                  label: const Text('Diagnostics'),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Row(
