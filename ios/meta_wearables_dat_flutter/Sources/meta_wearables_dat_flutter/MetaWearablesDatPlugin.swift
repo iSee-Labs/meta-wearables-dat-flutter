@@ -20,7 +20,7 @@ import MWDATDisplay
 import MWDATMockDevice
 
 public final class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
-  static let pluginVersion = "1.0.0-rc.1"
+  static let pluginVersion = "1.0.0"
   static let sdkVersion = "1.0.0"
 
   private static var configured = false

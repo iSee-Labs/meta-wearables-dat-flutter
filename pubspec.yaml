@@ -3,7 +3,7 @@ description: >-
   Unofficial Flutter plugin for Meta Wearables Device Access Toolkit (DAT) 1.0:
   camera, photos, display and device state on Ray-Ban Meta, Oakley Meta and
   Ray-Ban Display glasses.
-version: 1.0.0-rc.1
+version: 1.0.0
 homepage: https://github.com/iSee-Labs/meta-wearables-dat-flutter
 repository: https://github.com/iSee-Labs/meta-wearables-dat-flutter
 issue_tracker: https://github.com/iSee-Labs/meta-wearables-dat-flutter/issues

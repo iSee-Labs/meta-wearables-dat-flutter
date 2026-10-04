@@ -58,7 +58,7 @@ fails" reports come from skipping this step (see
 
 ```yaml
 dependencies:
-  meta_wearables_dat_flutter: ^1.0.0 # release candidates: 1.0.0-rc.1
+  meta_wearables_dat_flutter: ^1.0.0
 ```
 
 ```dart
