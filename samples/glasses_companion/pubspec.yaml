@@ -1,0 +1,28 @@
+name: glasses_companion
+description: >
+  A companion-app sample for meta_wearables_dat_flutter: device state,
+  update flows, camera and photo, display, Mock Device Kit controls and the
+  experimental DAT 1.0 modules in one app.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.8.0
+  flutter: '>=3.44.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  meta_wearables_dat_flutter:
+    path: ../../
+  path_provider: ^2.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  very_good_analysis: ^7.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/mock/

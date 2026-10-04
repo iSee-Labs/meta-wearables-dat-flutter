@@ -1,19 +1,19 @@
 #
 # Podspec for meta_wearables_dat_flutter.
 #
-# This plugin is *Swift Package Manager first*. Meta's official iOS DAT SDK
-# (`MWDATCore`, `MWDATCamera`, `MWDATMockDevice`) is consumed via SPM in
-# `meta_wearables_dat_flutter/Package.swift` and is **not** vendored as
-# `xcframework`s here.
+# This plugin is *Swift Package Manager only*. Meta's official iOS DAT SDK
+# (MWDATCore, MWDATCamera, MWDATDisplay, MWDATMockDevice, MWDATInputs,
+# MWDATMotion, MWDATSpeech) is distributed as binary xcframeworks through
+# Swift Package Manager and is consumed in
+# `meta_wearables_dat_flutter/Package.swift`; it is not vendored here.
 #
-# Consumers must run `flutter config --enable-swift-package-manager` and use
-# Xcode 15.4+. See `doc/troubleshooting.md` for setup details. The Swift
-# sources include a `#if !canImport(MWDATCore)` guard that emits a clear
-# `#error` when SPM has not been enabled.
+# Requirements: Flutter >= 3.44 (Swift Package Manager on by default),
+# Xcode 26.4+, iOS 17.2+. CocoaPods-only builds are not supported: the Swift
+# sources emit a clear `#error` when the SDK modules are missing.
 #
 Pod::Spec.new do |s|
   s.name             = 'meta_wearables_dat_flutter'
-  s.version          = '0.7.1'
+  s.version          = '1.0.0'
   s.summary          = 'Unofficial Flutter plugin for Meta\'s Wearables Device Access Toolkit.'
   s.description      = <<-DESC
 Unofficial Flutter plugin bridging Meta's iOS and Android Wearables Device
@@ -29,10 +29,10 @@ frameworks.
 
   s.dependency 'Flutter'
 
-  s.platform         = :ios, '17.0'
-  s.swift_version    = '5.9'
+  s.platform         = :ios, '17.2'
+  s.swift_version    = '6.0'
 
-  s.frameworks = 'CoreBluetooth', 'Network', 'AVFoundation', 'ExternalAccessory'
+  s.frameworks = 'CoreBluetooth', 'Network', 'AVFoundation', 'ExternalAccessory', 'VideoToolbox'
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

@@ -63,7 +63,8 @@ const carMaintenanceTutorials = <CarMaintenanceTutorial>[
   CarMaintenanceTutorial(
     title: 'Check engine light',
     duration: 'Hard • 2 hours',
-    imageUri: 'https://www.facebook.com/assets/wearables_dat_display/engine.png',
+    imageUri:
+        'https://www.facebook.com/assets/wearables_dat_display/engine.png',
     iconImageUri:
         'https://www.facebook.com/assets/wearables_dat_display/engine_square.png',
     steps: [
@@ -162,15 +163,16 @@ DisplayView buildTutorialDetailView(
           ),
         ],
       ),
-      FlexBox(
-        direction: DisplayDirection.row,
-        spacing: 8,
-        alignment: DisplayAlignment.center,
-        crossAlignment: DisplayAlignment.center,
-        wrap: true,
-        children: [
+      // A button group lays buttons out as the glasses expect; the primary
+      // action receives the initial focus.
+      DisplayButtonGroup(
+        buttons: [
           DisplayButton(label: 'Back', onClick: onBack),
-          DisplayButton(label: 'Start', onClick: onStart),
+          DisplayButton(
+            label: 'Start',
+            actionRole: DisplayActionRole.primary,
+            onClick: onStart,
+          ),
         ],
       ),
     ],
@@ -202,12 +204,8 @@ DisplayView buildTutorialStepView(
           DisplayText(tutorial.steps[clamped], style: DisplayTextStyle.body),
         ],
       ),
-      FlexBox(
-        direction: DisplayDirection.row,
-        spacing: 8,
-        alignment: DisplayAlignment.center,
-        crossAlignment: DisplayAlignment.center,
-        children: [
+      DisplayButtonGroup(
+        buttons: [
           DisplayButton(
             label: 'Previous',
             iconName: DisplayIconName.triangleLeftVerticalLine,
@@ -218,6 +216,7 @@ DisplayView buildTutorialStepView(
             iconName: isLast
                 ? DisplayIconName.checkmark
                 : DisplayIconName.triangleRightVerticalLine,
+            actionRole: DisplayActionRole.primary,
             onClick: onNext,
           ),
           DisplayButton(

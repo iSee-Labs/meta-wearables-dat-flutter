@@ -1,134 +1,195 @@
-# Registration flow
+# Registration and permissions
 
-Registration pairs your app with a specific user's Meta account and
-glasses. It is a deep-link round-trip: your app -> Meta AI -> your app.
+Registration links your app to the user's Meta account and glasses
+through the Meta AI app. DAT 1.0 supports two flows:
 
-## End-to-end timeline
+- **App-initiated:** your app calls `startRegistration()`, Meta AI
+  opens, the user approves, and Meta AI calls back into your app.
+- **Meta-AI-initiated (new in 1.0):** the user starts the connection
+  from the Meta AI app. Your app receives a `RegistrationRequest` and
+  decides whether to continue.
 
-```
-[1] requestAndroidPermissions()        (Android only, no-op on iOS)
-[2] startRegistration()
-[3] Meta AI app handles consent
-[4] Meta AI deep-links back into your app's URL scheme
-[5] Host SceneDelegate posts                       (iOS scene apps)
-    MetaWearablesDatHandleURL notification     or  (iOS classic apps,
-    AppDelegate routes the URL via the plugin's    automatic)
-    application-delegate registrar             or
-    Android intent-filter routes the URL           (Android, automatic)
-[6] registrationStateStream() emits RegistrationState.registered
-[7] activeDeviceStream() emits a non-null DeviceInfo
-```
+Complete the platform setup in [Getting started](getting_started.md)
+first: the callback scheme, the iOS scene delegate forwarding and the
+Android intent filter.
 
-## Code
+## Registration states
+
+`registrationStateStream()` emits the current state first, then every
+change. `getRegistrationState()` returns a one-off snapshot.
+
+| `RegistrationState` | Meaning |
+| --- | --- |
+| `unavailable` | Registration is not possible: the SDK is not initialised (Android: `BLUETOOTH_CONNECT` not granted yet) or Meta AI is missing |
+| `available` | The app can register |
+| `registering` | The flow is in progress (Meta AI is open, or the callback is being processed) |
+| `registered` | The app is registered; device, permission and session APIs work |
+| `unregistering` | Android: unregistration is in progress |
+
+## App-initiated registration
 
 ```dart
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:meta_wearables_dat_flutter/meta_wearables_dat_flutter.dart';
 
-// 1. Permissions (Android only, returns true on iOS).
-await MetaWearablesDat.requestAndroidPermissions();
+Future<void> connectGlasses() async {
+  // Android: requests BLUETOOTH_CONNECT and initialises the SDK.
+  // iOS: returns true immediately.
+  if (!await MetaWearablesDat.requestAndroidPermissions()) return;
 
-// 2. Listen for state transitions.
-MetaWearablesDat.registrationStateStream().listen((state) {
-  print('Registration state: $state');
-});
+  MetaWearablesDat.registrationStateStream().listen((state) {
+    debugPrint('registration: ${state.name}');
+  });
 
-// 3. Kick off the flow.
-await MetaWearablesDat.startRegistration();
-```
+  // Failures that happen after Meta AI opened arrive here.
+  MetaWearablesDat.registrationErrorStream().listen((error) {
+    debugPrint('registration failed: $error');
+  });
 
-On Android the plugin consumes the registration callback URL through
-its `<intent-filter>` automatically. On iOS the deep-link reaches your
-app's `AppDelegate` for classic-lifecycle apps and the plugin handles
-it, but apps with scene-based lifecycle (the Flutter default since
-Flutter 3.32) need one extra wiring step — see below.
-
-## iOS: SceneDelegate wiring (required for scene-based apps)
-
-Modern Flutter projects ship with a `UIApplicationSceneManifest` in
-`Info.plist` and a `SceneDelegate.swift` file. When that's the case,
-iOS delivers the Meta AI callback URL to `scene(_:openURLContexts:)`
-on the **host app's** `SceneDelegate`, **not** to `AppDelegate`. A
-Flutter plugin cannot inject itself into another file's
-`SceneDelegate`, so the host app must forward the URL.
-
-Add the following overrides to `ios/Runner/SceneDelegate.swift`:
-
-```swift
-import Flutter
-import UIKit
-
-class SceneDelegate: FlutterSceneDelegate {
-
-  override func scene(
-    _ scene: UIScene,
-    willConnectTo session: UISceneSession,
-    options connectionOptions: UIScene.ConnectionOptions
-  ) {
-    super.scene(scene, willConnectTo: session, options: connectionOptions)
-    forward(urlContexts: connectionOptions.urlContexts)
-  }
-
-  override func scene(
-    _ scene: UIScene,
-    openURLContexts URLContexts: Set<UIOpenURLContext>
-  ) {
-    super.scene(scene, openURLContexts: URLContexts)
-    forward(urlContexts: URLContexts)
-  }
-
-  private func forward(urlContexts: Set<UIOpenURLContext>) {
-    for context in urlContexts {
-      NotificationCenter.default.post(
-        name: Notification.Name("MetaWearablesDatHandleURL"),
-        object: nil,
-        userInfo: ["url": context.url],
-      )
+  try {
+    await MetaWearablesDat.startRegistration();
+  } on RegistrationError catch (e) {
+    switch (e.reason) {
+      case RegistrationErrorCase.metaAINotInstalled:
+        // Ask the user to install the Meta AI app.
+        break;
+      case RegistrationErrorCase.configurationInvalid:
+        // Run dumpDiagnostics() and fix the reported findings.
+        break;
+      case RegistrationErrorCase.alreadyRegistered:
+        break;
+      default:
+        debugPrint('startRegistration: $e');
     }
   }
 }
 ```
 
-The plugin listens for the `MetaWearablesDatHandleURL` notification at
-`register(with:)` time and routes the URL to
-`Wearables.shared.handleUrl(...)` internally, so you do **not** need
-to call `MetaWearablesDat.handleUrl(...)` from Dart.
+Timeline:
 
-If your app uses the classic `AppDelegate` lifecycle (no scene
-manifest), skip this step — the plugin auto-consumes the URL via the
-application delegate registrar.
+1. `startRegistration()` opens the Meta AI app.
+2. The user approves (Developer Mode shows an "unverified app" prompt).
+3. Meta AI opens `<your scheme>://?...` in your app.
+4. The plugin hands the URL to the SDK: on iOS through the application
+   delegate or the `MetaWearablesDatHandleURL` notification posted by
+   your scene delegate; on Android through the launch intent and
+   `onNewIntent`.
+5. `registrationStateStream()` emits `registered`.
+6. `devicesStream()` and `activeDeviceStream()` start reporting glasses.
 
-A complete reference implementation lives in
-[`example/ios/Runner/SceneDelegate.swift`](../example/ios/Runner/SceneDelegate.swift).
+### `handleUrl`
 
-## RegistrationState semantics
-
-| State           | Meaning                                                   |
-| --------------- | --------------------------------------------------------- |
-| `unavailable`   | SDK not initialised, or no internet.                      |
-| `available`     | SDK ready, no glasses paired.                             |
-| `registering`   | Mid-flow: Meta AI screen is up, or returning from it.     |
-| `registered`    | Glasses paired and active. APIs requiring a device work.  |
-
-## Unregistering
+You normally do not call `handleUrl`. Use it only when your app
+receives the Meta AI callback URL through another path (for example
+your own deep-link router consumed it first):
 
 ```dart
-await MetaWearablesDat.startUnregistration();
+final consumed = await MetaWearablesDat.handleUrl(url.toString());
 ```
 
-## Troubleshooting
+It returns whether the SDK consumed the URL and throws a
+`HandleUrlError` (`invalidUrl`, `registrationError`,
+`unregistrationError`) when the URL carries a failed result.
 
-- **State stays `unavailable`** on Android — `BLUETOOTH_CONNECT` was not
-  granted. Call `requestAndroidPermissions()` and verify the user
-  accepted.
-- **Deep link never returns** — check that your URL scheme matches the
-  one in `Info.plist` (iOS) / `AndroidManifest.xml` (Android) and that
-  Meta AI is installed.
-- **iOS: tapping "Allow" in Meta AI reopens the app but nothing
-  happens** — your `SceneDelegate` does not forward the inbound URL.
-  Add the `scene(_:openURLContexts:)` /
-  `scene(_:willConnectTo:options:)` overrides shown in
-  [iOS: SceneDelegate wiring](#ios-scenedelegate-wiring-required-for-scene-based-apps)
-  to `ios/Runner/SceneDelegate.swift`. Without them, iOS silently
-  drops the callback URL and the SDK never sees the consent grant.
-- **Android's `MainActivity` does not receive the deep link** — verify
-  `launchMode="singleTop"` and the `<intent-filter>` block.
+## Meta-AI-initiated registration
+
+In DAT 1.0 the user can start the connection from the Meta AI app.
+Subscribe early (for example in `main()` or your root widget), because
+the request can arrive as soon as your app launches from Meta AI:
+
+```dart
+StreamSubscription<RegistrationRequest> listenForMetaAiRequests(
+  Future<bool> Function() askUser,
+) {
+  return MetaWearablesDat.registrationRequestStream().listen((request) async {
+    final accepted = await askUser();
+    try {
+      if (accepted) {
+        await request.continueRegistration();
+      } else {
+        await request.cancel();
+      }
+    } on RegistrationRequestError catch (e) {
+      // alreadyHandled: answered before or expired.
+      debugPrint('registration request ${request.requestId}: $e');
+    }
+  });
+}
+```
+
+Rules:
+
+- Answer each request **exactly once**. A second answer throws a
+  `StateError`; `request.isHandled` tells you whether it was answered.
+- Unanswered requests **expire after five minutes**. Answering an
+  expired request fails with `RegistrationRequestErrorCase.alreadyHandled`.
+- After `continueRegistration()` the result arrives on
+  `registrationStateStream()` like the app-initiated flow.
+
+## Unregistration
+
+```dart
+try {
+  await MetaWearablesDat.startUnregistration();
+} on UnregistrationError catch (e) {
+  if (e.reason != UnregistrationErrorCase.alreadyUnregistered) rethrow;
+}
+```
+
+`startUnregistration()` stops any running session first. The state
+moves to `available` (through `unregistering` on Android). Users can
+also remove your app in the Meta AI app; watch
+`registrationStateStream()` rather than assuming the app stays
+registered.
+
+## Permissions
+
+DAT permissions are granted per app in the Meta AI app, not through
+the iOS or Android permission dialogs. Request them after registration.
+
+| `Permission` | Needed for |
+| --- | --- |
+| `camera` | `startStreamSession`, `capturePhoto`, experimental `captureHighResPhoto` |
+| `microphone` | Experimental Speech (`startSpeech`) and the glasses microphone |
+
+```dart
+Future<bool> ensureCameraPermission() async {
+  var status = await MetaWearablesDat.checkPermissionStatus(Permission.camera);
+  if (status.isGranted) return true;
+  try {
+    status = await MetaWearablesDat.requestPermission(Permission.camera);
+  } on PermissionError catch (e) {
+    if (e.recoveryAction == DatRecoveryAction.connectGlasses) {
+      // noDevice / noDeviceWithConnection: pair, power on and wear the glasses.
+    }
+    return false;
+  }
+  return status.isGranted;
+}
+```
+
+- A denial is returned as `PermissionStatus.denied`, not thrown.
+- `requestCameraPermission()` and `getCameraPermissionStatus()` still
+  work but are deprecated; use `requestPermission(Permission.camera)`
+  and `checkPermissionStatus(Permission.camera)`.
+- Android needs `MainActivity` to extend `FlutterFragmentActivity`,
+  otherwise `PermissionErrorCase.missingFragmentActivity`.
+
+## Errors
+
+| Error | Thrown by / delivered on | Common reasons and fixes |
+| --- | --- | --- |
+| `RegistrationError` | `startRegistration`, `registrationErrorStream` | `metaAINotInstalled`: install Meta AI. `configurationInvalid`: fix the findings from `dumpDiagnostics()`. `networkUnavailable`: retry online. `alreadyRegistered`: nothing to do. `noActivity` (Android): call from the foreground |
+| `UnregistrationError` | `startUnregistration`, `registrationErrorStream` | `alreadyUnregistered`: nothing to do |
+| `HandleUrlError` | `handleUrl` | `invalidUrl`: pass the full callback URL |
+| `RegistrationRequestError` | `continueRegistration`, `cancel` | `alreadyHandled`: answered or expired |
+| `PermissionError` | `requestPermission`, `checkPermissionStatus` | `noDevice`, `noDeviceWithConnection`: connect glasses. `requestInProgress`: wait. `metaAINotInstalled`. `missingFragmentActivity` (Android) |
+
+Every error is a `DatError` with `category`, `code`, `message`,
+`platformCase` and `recoveryAction`. See
+[Streaming: error handling](streaming.md#error-handling) for the
+pattern-matching style.
+
+If registration never completes, check [Troubleshooting: registration](troubleshooting.md#registration).

@@ -30,7 +30,7 @@ class _AppState extends State<App> {
   StreamSubscription<RegistrationState>? _regSub;
   StreamSubscription<DeviceInfo?>? _deviceSub;
   StreamSubscription<DisplayState>? _displaySub;
-  StreamSubscription<List<DeviceInfo>>? _devicesSub;
+  StreamSubscription<DisplayError>? _displayErrorSub;
 
   @override
   void initState() {
@@ -43,36 +43,15 @@ class _AppState extends State<App> {
     });
     _displaySub = MetaWearablesDat.displayStateStream().listen((s) {
       if (!mounted) return;
-      debugPrint('[display_access] displayState -> $s');
-      setState(() => _displayState = s);
-      // If the display drops to stopped while we think it's active,
-      // reset so the user can restart cleanly.
-      if (s == DisplayState.stopped && _displayActive) {
-        setState(() {
-          _displayActive = false;
-          _tutorial = null;
-          _screen = DisplayScreen.list;
-        });
-      }
+      setState(() {
+        _displayState = s;
+        // The Back gesture on the glasses ends the display session.
+        if (s == DisplayState.stopped) _displayActive = false;
+      });
     });
-    // Live device/link-state logger — shows whether the Display glasses ever
-    // reach `connected`. Don/doff the glasses and watch the transitions here.
-    _devicesSub = MetaWearablesDat.devicesStream().listen((devices) {
-      for (final d in devices) {
-        debugPrint(
-          '[display_access] device "${d.name}" kind=${d.kind} '
-          'link=${d.linkState} uuid=${d.uuid}',
-        );
-      }
-    });
-  }
-
-  /// Dumps the SDK's own diagnostics (registration, paired devices, plist
-  /// validation) to the console. Wired to the Diagnostics button.
-  Future<void> _dumpDiagnostics() async {
-    final diag = await MetaWearablesDat.dumpDiagnostics();
-    debugPrint('[display_access] diagnostics: $diag');
-    if (mounted) _toast('Diagnostics dumped to console');
+    _displayErrorSub = MetaWearablesDat.displayErrorStream().listen(
+      (e) => _toast('Display error: ${e.code} (${e.message})'),
+    );
   }
 
   @override
@@ -80,13 +59,15 @@ class _AppState extends State<App> {
     _regSub?.cancel();
     _deviceSub?.cancel();
     _displaySub?.cancel();
-    _devicesSub?.cancel();
+    _displayErrorSub?.cancel();
     super.dispose();
   }
 
   void _toast(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _requestPermissions() async {
@@ -112,7 +93,6 @@ class _AppState extends State<App> {
   }
 
   Future<void> _startDisplay() async {
-    if (_displayActive) return;
     try {
       await MetaWearablesDat.startDisplaySession();
       if (!mounted) return;
@@ -120,33 +100,11 @@ class _AppState extends State<App> {
         _displayActive = true;
         _screen = DisplayScreen.list;
       });
-      // Wait for the display capability to reach .started before sending content.
-      await MetaWearablesDat.displayStateStream()
-          .firstWhere((s) => s == DisplayState.started)
-          .timeout(const Duration(seconds: 15));
-      // Brief grace period — glasses need a moment to stabilize after started.
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      if (!mounted) return;
-      // DIAGNOSTIC: send the simplest possible view first to isolate whether
-      // the deviceDisconnected-on-send is payload-related (complex list +
-      // remote images) or a raw connection-stability issue.
-      debugPrint('[display_access] sending minimal smoke-test view');
-      await _send(
-        const FlexBox(
-          spacing: 12,
-          children: [
-            DisplayText('Hello, glasses!', style: DisplayTextStyle.heading),
-          ],
-        ),
-      );
-      debugPrint('[display_access] minimal view sent; now sending full list');
       await _showList();
     } on DatError catch (e) {
-      _toast('Display failed: ${e.code} | ${e.message}');
-      if (mounted) setState(() => _displayActive = false);
+      _toast('Display failed: ${e.code}');
     } on Object catch (e) {
       _toast('Display failed: $e');
-      if (mounted) setState(() => _displayActive = false);
     }
   }
 
@@ -161,20 +119,39 @@ class _AppState extends State<App> {
   }
 
   Future<void> _send(DisplayView view) async {
-    if (!_displayActive) return;
+    // Catch layout mistakes on the phone before they reach the glasses.
+    final issues = view.validate();
+    if (issues.any((i) => i.isFatal)) {
+      _toast('Invalid view: ${issues.first}');
+      return;
+    }
     try {
-      await MetaWearablesDat.sendDisplayView(view);
+      final warnings = await MetaWearablesDat.sendDisplayView(view);
+      if (warnings.isNotEmpty) _toast('Display warning: ${warnings.first}');
     } on DatError catch (e) {
-      _toast('Send failed: ${e.code} | ${e.message}');
-      // The native side tears down the session on a fatal send error
-      // (e.g. deviceDisconnected); reset so the UI stops offering sends.
-      if (mounted) {
-        setState(() {
-          _displayActive = false;
-          _tutorial = null;
-          _screen = DisplayScreen.list;
-        });
-      }
+      _toast('Send failed: ${e.code}');
+    }
+  }
+
+  /// Prints the plugin's configuration findings and held native resources.
+  Future<void> _dumpDiagnostics() async {
+    final diagnostics = await MetaWearablesDat.dumpDiagnostics();
+    debugPrint('[display_access] $diagnostics');
+    for (final finding in diagnostics.findings) {
+      debugPrint('[display_access] $finding');
+    }
+    _toast(
+      diagnostics.findings.isEmpty
+          ? 'Configuration OK (details in console)'
+          : '${diagnostics.findings.length} findings (see console)',
+    );
+  }
+
+  Future<void> _clear() async {
+    try {
+      await MetaWearablesDat.clearDisplay();
+    } on DatError catch (e) {
+      _toast('Clear failed: ${e.code}');
     }
   }
 
@@ -305,8 +282,9 @@ class _AppState extends State<App> {
             children: [
               Expanded(
                 child: FilledButton.tonalIcon(
-                  onPressed:
-                      isRegistered && !_displayActive ? _startDisplay : null,
+                  onPressed: isRegistered && !_displayActive
+                      ? _startDisplay
+                      : null,
                   icon: const Icon(Icons.cast_connected),
                   label: const Text('Start display'),
                 ),
@@ -323,15 +301,26 @@ class _AppState extends State<App> {
           ),
           const SizedBox(height: 24),
           if (_displayActive) ...[
-            Text(
-              'On the glasses',
-              style: theme.textTheme.titleMedium,
-            ),
+            Text('On the glasses', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
-            FilledButton.icon(
-              onPressed: _showList,
-              icon: const Icon(Icons.list_alt),
-              label: const Text('Show tutorial list'),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _showList,
+                    icon: const Icon(Icons.list_alt),
+                    label: const Text('Show tutorial list'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _clear,
+                    icon: const Icon(Icons.layers_clear),
+                    label: const Text('Clear display'),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             Text(
@@ -398,8 +387,9 @@ class _StatusCard extends StatelessWidget {
             _StatusRow(
               label: 'BT / Internet',
               value: permissionsGranted ? 'granted' : 'not granted',
-              icon:
-                  permissionsGranted ? Icons.check_circle : Icons.error_outline,
+              icon: permissionsGranted
+                  ? Icons.check_circle
+                  : Icons.error_outline,
             ),
             _StatusRow(
               label: 'Display state',

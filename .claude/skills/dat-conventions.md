@@ -1,122 +1,139 @@
 ---
-description: Plugin coding conventions, architecture invariants, and naming rules
-globs: lib/**/*.dart, ios/**/*.swift, android/**/*.kt
+description: Plugin coding conventions, architecture invariants, channel surface, wire contract v2, error model, and naming map (DAT 1.0)
+globs: lib/**/*.dart, ios/**/*.swift, android/**/*.kt, tool/*.dart
 ---
 
-# meta_wearables_dat_flutter Conventions
+# meta_wearables_dat_flutter Conventions (1.0)
 
-> Full Meta DAT API reference:
-> <https://wearables.developer.meta.com/llms.txt?full=true>
+> Canonical context: [`AGENTS.md`](../../AGENTS.md).
+> Meta DAT reference: <https://wearables.developer.meta.com/llms.txt?full=true>
 
 ## Architecture invariants
 
-The plugin is organized into three logical layers, mirroring Meta's
-native modules:
+- **Dart facade** `lib/meta_wearables_dat_flutter.dart` — static
+  `MetaWearablesDat`, sealed `DatError`, models in `lib/src/models/**`.
+  `lib/experimental.dart` re-exports experimental models.
+- **Channel names** live only in `lib/src/channels.dart`
+  (`DatChannels.methods` = 67, `DatChannels.events` = 34). Both native
+  bridges must register exactly these; `tool/check_channel_parity.dart`
+  enforces it.
+- **iOS** `ios/meta_wearables_dat_flutter/Sources/meta_wearables_dat_flutter/`
+  and **Android** `android/src/main/kotlin/com/iseelabs/meta_wearables_dat_flutter/`
+  use the same type names: `MetaWearablesDatPlugin`, `WireCodec`,
+  `DeviceSessionHub`, `MetaSessionManager`, `MetaDisplayManager`,
+  `DisplayNode`, `MetaMockDeviceManager`, `DeviceStateObserver`,
+  `RegistrationBridge`, `ResourceLedger`, `EventSinkHandler`,
+  `StreamSessionArgs`.
+- One shared `DeviceSession` per device (`DeviceSessionHub`
+  acquire/release by owner).
+- Bridges hold no business logic beyond SDK mapping.
 
-- **Dart facade** (`lib/meta_wearables_dat_flutter.dart`) — public
-  `Future<T>` / `Stream<T>` API, typed errors, models.
-- **iOS bridge** (`ios/.../MetaWearablesDatPlugin.swift`,
-  `MetaSessionManager.swift`, `MetaMockDeviceManager.swift`) — Swift
-  thin wrapper around `MWDATCore` / `MWDATCamera` / `MWDATMockDevice`.
-- **Android bridge**
-  (`android/.../MetaWearablesDatPlugin.kt`, `MetaSessionManager.kt`,
-  `MetaMockDeviceManager.kt`) — Kotlin thin wrapper.
+## Wire contract v2
 
-Bridges must NOT contain business logic; everything user-visible
-belongs in the Dart facade.
+- Event channels: `meta_wearables_dat_flutter/<snake_name>`.
+- State channels carry enum names as strings and replay the last value
+  to new listeners.
+- Method errors: `PlatformException(code: CATEGORY, details: {case,
+  description, platformCase, platform})`.
+- Event errors: `{code: case, category, message, platformCase, platform}`.
+- Canonical case names = iOS Swift case names; Android maps its
+  SCREAMING_CASE into them and keeps the raw value in `platformCase`.
 
-## Channel naming
+## Error model
 
-| Channel | Type | Purpose |
-|---------|------|---------|
-| `meta_wearables_dat_flutter` | MethodChannel | All method calls |
-| `meta_wearables_dat_flutter/registration_state` | EventChannel | `RegistrationState` |
-| `meta_wearables_dat_flutter/active_device` | EventChannel | `Device?` |
-| `meta_wearables_dat_flutter/devices` | EventChannel | `List<Device>` |
-| `meta_wearables_dat_flutter/device_session_state` | EventChannel | `DeviceSessionState` |
-| `meta_wearables_dat_flutter/device_session_errors` | EventChannel | `DeviceSessionError` |
-| `meta_wearables_dat_flutter/stream_session_state` | EventChannel | `StreamSessionState` |
-| `meta_wearables_dat_flutter/stream_session_errors` | EventChannel | `StreamSessionError` |
-| `meta_wearables_dat_flutter/video_stream_size` | EventChannel | `Size` |
-| `meta_wearables_dat_flutter/video_frames` | EventChannel | `VideoFrame` (opt-in) |
-| `meta_wearables_dat_flutter/compatibility` | EventChannel | `DeviceCompatibilityEvent` |
-| `meta_wearables_dat_flutter/mock_devices` | EventChannel | `List<MockDeviceInfo>` |
+```dart
+try {
+  await MetaWearablesDat.startStreamSession();
+} on DeviceSessionError catch (e) {
+  if (e.reason == DeviceSessionErrorCase.noEligibleDevice) { /* ... */ }
+  if (e.recoveryAction == DatRecoveryAction.openFirmwareUpdate) {
+    await MetaWearablesDat.openFirmwareUpdate();
+  }
+}
+```
+
+- `category` = `DatErrorCodes.*` (e.g. `STREAM_ERROR`); `code` =
+  `reason.name`.
+- Subclasses: `RegistrationError`, `UnregistrationError`,
+  `HandleUrlError`, `RegistrationRequestError`, `PermissionError`,
+  `NavigationError`, `DeviceSessionError`, `StreamError`, `CaptureError`,
+  `PhotoError`, `DisplayError`, `InputsError`, `MotionError`,
+  `SpeechError`, `VoiceInvocationError`, `MockDeviceKitError`,
+  `DatArgumentError`, `DatPluginError`.
+- Old `is*` getters are `@Deprecated` shims; use `reason`.
 
 ## Dart conventions
 
-- All public APIs return `Future<T>` or `Stream<T>` — never callbacks.
-- All public APIs have dartdoc comments with `///`.
-- `very_good_analysis` lint rules apply; zero warnings is the bar.
-- Error types: `RegistrationError`, `UnregistrationError`,
-  `HandleUrlError`, `PermissionError`, `DeviceSessionError`,
-  `StreamSessionError`. Each ships `is*` convenience getters.
-- Models live under `lib/src/models/*.dart`. JSON round-trip tests live
-  under `test/`.
+- `very_good_analysis`; `flutter analyze --fatal-infos` clean.
+- `///` dartdoc on every public symbol; `@experimental` on experimental
+  ones.
+- Public APIs return `Future<T>` / `Stream<T>`.
+- Public streams with teardown use a `StreamController` whose `onCancel`
+  does not await (never `async*` with awaited cleanup).
+- Models decode with `fromWire` / `fromMap`; tests under `test/`.
 
 ## Swift conventions
 
-- `async`/`await` for SDK operations.
-- `AnyListenerToken.cancel()` to tear down `.listen {}` publishers.
-- `@MainActor` for any code that touches `FlutterMethodChannel` /
-  `FlutterEventSink` or UI.
-- Never block the main thread with frame processing.
-- Typed error mapping: catch each `*Error` enum and forward to Dart as
-  `PlatformException(code: kErrorCode, message: human, details: kRaw)`.
+- `async`/`await`; `AnyListenerToken.cancel()`; `@MainActor` for
+  channel/UI code; never block main with frame work.
+- Map errors through `WireCodec`.
+- Swift language mode 5; SPM only.
 
 ## Kotlin conventions
 
-- `Flow`/`StateFlow` with `collectLatest` for state streams.
-- Use a dedicated `CoroutineScope` per stream + cancel in `stop*`.
-- `Result` types where the SDK exposes them.
-- Wrap `IOException`, `IllegalStateException` into typed
-  `PlatformException` codes.
+- `Flow`/`StateFlow` + `collectLatest`; one scope per capability,
+  cancelled in `stop*`.
+- `StateFlow`s start at `STOPPED`: do not treat the initial value as
+  terminal.
+- Display builders: named arguments only. Never call `display.stop()`;
+  use `session.removeDisplay()`.
+- SDK packages are `com.meta.wearable.dat.*` (Maven coordinates are
+  `com.meta.wearable:mwdat-*`).
 
-## Naming map (Meta SDK → Flutter plugin)
+## Naming map (Meta SDK → plugin)
 
-| Meta type | Dart equivalent |
-|-----------|-----------------|
-| `Wearables.shared` | `MetaWearablesDat` (singleton) |
-| `RegistrationState` | `RegistrationState` enum |
-| `DeviceSessionState` | `DeviceSessionState` enum |
-| `StreamSessionState` | `StreamSessionState` enum |
-| `StreamSession` | hidden — fronted by `startStreamSession()` |
-| `StreamSessionConfig` | named args on `startStreamSession()` |
-| `AutoDeviceSelector` | default selector |
-| `SpecificDeviceSelector` | `deviceUUID:` arg |
-| `MockDeviceKit` | `enableMockDevice() / *Mock*()` methods |
+| Meta | Dart |
+|------|------|
+| `Wearables.shared` / `Wearables` | `MetaWearablesDat` (static) |
+| `RegistrationState` | `RegistrationState` |
+| `DeviceSession` / `DeviceSessionState` | shared session / `DeviceSessionState` |
+| `Stream` / `StreamSessionState` | `startStreamSession()` / `StreamSessionState` |
+| `StreamConfiguration` / `StreamSessionConfig` | `StreamSessionConfig` |
+| `AutoDeviceSelector` / `SpecificDeviceSelector` | default / `deviceUUID:` |
+| `Display` | `startDisplaySession()` / `sendDisplayView()` |
+| `FlexBox`/`Text`/`Image`/`Button`/`ButtonGroup`/`Icon`/`VideoPlayer` | `FlexBox`/`DisplayText`/`DisplayImage`/`DisplayButton`/`DisplayButtonGroup`/`DisplayIcon`/`VideoPlayer` |
+| `IconName` (snake_case raw) | `DisplayIconName` (camelCase) |
+| `MockDeviceKit` | `enableMockDevice()` / `*Mock*()` |
 
 ## Performance rules (non-negotiable)
 
-- Texture path: never serialize decoded frames over MethodChannel.
-- `videoFramesStream` is opt-in; gate emission on subscriber count.
-- All event streams must stop emitting when Dart cancels its
-  subscription.
-- `stopStreamSession()` must unregister the texture (GPU memory leak).
+- Texture path never serializes decoded frames over MethodChannel.
+- `videoFramesStream` opt-in, subscriber-gated.
+- Sinks set in `onListen`, nulled in `onCancel`.
+- `stopStreamSession()` unregisters the texture; `ResourceLedger`
+  returns to zero.
 
 ## Imports
 
 ```dart
 import 'package:meta_wearables_dat_flutter/meta_wearables_dat_flutter.dart';
+import 'package:meta_wearables_dat_flutter/experimental.dart'; // optional
 ```
 
 ```swift
 import MWDATCore
 import MWDATCamera
-#if canImport(MWDATMockDevice)
+import MWDATDisplay
 import MWDATMockDevice
-#endif
 ```
 
 ```kotlin
-import com.meta.wearable.mwdat.core.Wearables
-import com.meta.wearable.mwdat.camera.StreamConfiguration
+import com.meta.wearable.dat.core.Wearables
+import com.meta.wearable.dat.camera.Stream
 ```
 
 ## Links
 
-- [`AGENTS.md`](../../AGENTS.md) — canonical AI context
-- [`doc/`](../../doc/) — long-form topic docs
-- Meta iOS reference:
-  <https://wearables.developer.meta.com/docs/reference/ios_swift/dat/0.6>
-- Meta Android reference:
-  <https://wearables.developer.meta.com/docs/reference/android_kotlin/dat/0.6>
+- [`AGENTS.md`](../../AGENTS.md)
+- [`doc/`](../../doc/)
+- Meta docs: <https://wearables.developer.meta.com/docs/develop/>

@@ -1,115 +1,100 @@
 ---
-description: App registration with Meta AI, deep-link callbacks, and camera permission flows
-globs: lib/**/*.dart, **/AppDelegate.swift, **/SceneDelegate.swift, **/MainActivity.kt
+description: App registration with Meta AI (app- and Meta-AI-initiated), deep-link callbacks, camera and microphone permissions, and Meta AI update navigation (DAT 1.0)
+globs: lib/**/*.dart, ios/**/RegistrationBridge.swift, android/**/RegistrationBridge.kt, **/AppDelegate.swift, **/MainActivity.kt
 ---
 
-# Permissions & Registration (Flutter)
+# Permissions & Registration (Flutter, DAT 1.0)
 
-The DAT SDK separates two concepts:
+1. **Registration** — the app registers with the Meta AI app.
+2. **Wearable permissions** — then requests `Permission.camera` /
+   `Permission.microphone`, granted inside Meta AI.
 
-1. **Registration** — your app registers with the Meta AI app to
-   become an approved integration.
-2. **Device permissions** — once registered, request specific device
-   permissions (e.g. camera).
-
-All permission grants happen inside the Meta AI companion app via deep
-link.
-
-## Registration flow
-
-```
-Your app                       Meta AI app
-   │                                │
-   │ startRegistration()            │
-   │ ───────────────────────────▶   │
-   │                                │ user taps "Allow"
-   │ deep-link callback             │
-   │ ◀───────────────────────────   │
-   │ handleUrl(url)                 │
-   │                                │
-   │ registrationStateStream emits  │
-   │ RegistrationState.registered   │
-```
-
-### Start
+## App-initiated registration
 
 ```dart
 await MetaWearablesDat.startRegistration();
 ```
 
-`appId` and `urlScheme` are accepted as optional parameters but
-ignored — both platforms read the active values from the host app's
-`Info.plist` (`MWDAT` dict) and `AndroidManifest.xml` `<meta-data>`
-entries. The parameters will be removed in v0.2.0.
+No parameters (the 0.x `appId`/`urlScheme` args were removed). Values
+come from `Info.plist` `MWDAT` (iOS) and manifest meta-data
+`com.meta.wearable.mwdat.APPLICATION_ID` / `CLIENT_TOKEN` (Android).
 
-Throws `RegistrationError` if misconfigured:
+Throws `RegistrationError`; switch on `reason`
+(`RegistrationErrorCase.configurationInvalid`, `metaAINotInstalled`,
+`alreadyRegistered`, `networkUnavailable`, `timeout`, ...).
 
-- `isConfigurationInvalid` — `Info.plist` `MWDAT` keys missing/bad
-  scheme (no underscores).
-- `isMetaAiNotInstalled` — install or update the Meta AI app.
-- `isAlreadyRegistered` — call `startUnregistration()` first.
+Callback URLs are handled by the plugin (iOS application delegate,
+Android `onNewIntent`). Call `handleUrl(url)` only for URLs your app receives
+another way; it returns whether the SDK consumed it and throws
+`HandleUrlError`.
 
-### Handle the deep-link callback
-
-The plugin's `iOS SceneDelegate` and Android `MainActivity` already
-forward URLs to native code. From Dart you only need to do this if
-you handle deep links yourself:
+## Meta AI-initiated registration
 
 ```dart
-await MetaWearablesDat.handleUrl(uri.toString());
-```
-
-### Observe state
-
-```dart
-MetaWearablesDat.registrationStateStream().listen((state) {
-  // unregistered | registering | registered
+MetaWearablesDat.registrationRequestStream().listen((req) async {
+  if (await userAccepts()) {
+    await req.continueRegistration();
+  } else {
+    await req.cancel();
+  }
 });
 ```
 
-### Unregister
+Answer each `RegistrationRequest` exactly once (second answer throws
+`StateError`); unanswered requests expire after 5 minutes. Failures throw
+`RegistrationRequestError`.
+
+## State
 
 ```dart
-await MetaWearablesDat.startUnregistration();
+final now = await MetaWearablesDat.getRegistrationState();
+MetaWearablesDat.registrationStateStream().listen((s) {
+  // unavailable | available | registering | registered | unregistering
+});
+MetaWearablesDat.registrationErrorStream().listen((e) { /* DatError */ });
 ```
 
-## Camera permissions
+Unregister: `startUnregistration()` (`UnregistrationError`).
+
+## Permissions
 
 ```dart
-final status = await MetaWearablesDat.checkCameraPermissionStatus();
-// notDetermined | granted | denied | restricted
-
-await MetaWearablesDat.requestCameraPermission();
-// opens Meta AI for the user to grant; resolves with the new status
+final status = await MetaWearablesDat.checkPermissionStatus(Permission.camera);
+if (status != PermissionStatus.granted) {
+  await MetaWearablesDat.requestPermission(Permission.camera);
+}
 ```
 
-Users can choose:
+- `PermissionStatus`: `granted`, `denied`.
+- `Permission.microphone` is needed for Speech and in-stream audio.
+- `PermissionError` reasons include `noDevice`, `requestInProgress`,
+  `requestTimeout`, `metaAINotInstalled`, `missingFragmentActivity`
+  (Android `MainActivity` must be a `FlutterFragmentActivity`).
+- `requestCameraPermission()` / `getCameraPermissionStatus()` are
+  deprecated shims.
+- A grant on any linked device counts; if all devices disconnect,
+  permissions are unavailable.
 
-- **Allow once** — temporary, single-session grant.
-- **Allow always** — persistent grant.
+## Android runtime permissions
 
-## Multi-device behavior
+`requestAndroidPermissions()` requests `BLUETOOTH_CONNECT` and
+initialises the DAT SDK on Android; returns `true` on iOS. Call it before
+registration.
 
-- Users can link multiple glasses to Meta AI.
-- A permission granted on **any** linked device counts as granted for
-  your app.
-- If all devices disconnect, permissions become unavailable.
+## Update navigation
 
-## Developer Mode vs Production
+`openFirmwareUpdate()` and `openDatGlassesAppUpdate()` open Meta AI;
+failures throw `NavigationError`. Trigger them from
+`DatError.recoveryAction`.
 
-| Mode | Registration |
-|------|---------------|
-| Developer Mode | `MetaAppID = "0"` + Developer Mode toggle in Meta AI app |
-| Production | Request an AppID from the [Wearables Developer Center](https://wearables.developer.meta.com/) |
+## Developer Mode vs Beta/production
 
-## Prerequisites
-
-- Internet connection (registration calls Meta's servers).
-- Meta AI companion app installed.
-- Developer Mode toggle ON in Meta AI app for unverified apps.
+| Mode | Setup |
+|---|---|
+| Developer Mode | Meta AI → Settings → App Info → tap version 5 times; app id/token may be omitted |
+| Beta release channel | App id + client token from Wearables Developer Center; create a new app version for 1.0 builds |
 
 ## Links
 
 - [`doc/registration_flow.md`](../../doc/registration_flow.md)
-- Meta permissions docs:
-  <https://wearables.developer.meta.com/docs/permissions-requests>
+- Meta docs: <https://wearables.developer.meta.com/docs/develop/>

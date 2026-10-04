@@ -1,28 +1,66 @@
 # Files ignored when publishing to pub.dev.
 #
-# `.pubignore` overrides `.gitignore` for pub. We use it to keep the
-# published tarball small and on-topic: pub ships `lib/`, the platform
-# folders, and the bare `example/`. Everything else (research material,
-# polished sample apps, CI artifacts) stays out.
+# `.pubignore` replaces the root `.gitignore` for pub, so the usual
+# ignores are repeated here. The published package contains `lib/`, the
+# platform folders (`ios/`, `android/`), `doc/`, `test/`, the bare
+# `example/` (lib, integration_test, pubspec.yaml, platform runners),
+# README.md, CHANGELOG.md, LICENSE and NOTICE. Everything below stays out.
 
 # Vendored research material (Meta's official samples + community plugin).
 meta-glasses-research/
 
-# Polished sample apps. These live in the repo for reference but should
-# not bloat the pub tarball; consumers can fetch them from GitHub.
+# Polished sample apps. They live in the repository; consumers can fetch
+# them from GitHub.
 samples/
 
-# IDE / editor.
+
+# Repository tooling, CI and coverage output.
+tool/
+coverage/
+.github/
+install-skills.sh
+context7.json
+
+# AI assistant configuration.
+.claude/
+.cursor/
+
+# IDE / editor / OS.
 .vscode/
 .idea/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+*.swp
+*.log
 
-# Tooling artifacts.
+# Build and tooling artifacts.
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
-.gradle/
+.metadata
+.packages
+pubspec.lock
 build/
+.build/
+.swiftpm/
+.gradle/
+.kotlin/
+.cxx/
+Pods/
+Podfile.lock
+xcuserdata/
+DerivedData/
+**/Flutter/ephemeral/
+**/Flutter/Generated.xcconfig
+**/Flutter/flutter_export_environment.sh
+**/GeneratedPluginRegistrant.*
 
 # Local properties / credentials.
-android/local.properties
-example/android/local.properties
+local.properties
+key.properties
+*.jks
+*.keystore
+# Maintainer-only material.
+doc/meta_issue_objc_copyClassList.md

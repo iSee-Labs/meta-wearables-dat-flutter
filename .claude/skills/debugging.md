@@ -1,160 +1,119 @@
 ---
-description: Diagnose common issues - registration failures, no eligible device, texture not rendering, Maven 401, Xcode SPM errors
-globs: lib/**/*.dart, ios/**, android/**
+description: Diagnose common issues with dumpDiagnostics findings - registration failures, no eligible device, texture not rendering, SPM/Xcode errors, experimental modules not linked, known 1.0 issues
+globs: lib/**/*.dart, ios/**, android/**, example/**
 ---
 
-# Debugging meta_wearables_dat_flutter
+# Debugging meta_wearables_dat_flutter (1.0)
 
-Use this when something doesn't work. Most issues are config; the
-plugin itself rarely throws at runtime once registration is solid.
+Most issues are configuration. Start with `dumpDiagnostics()`.
 
 ## Quick triage
 
 ```
-Connection / streaming not working?
-│
-├── flutter analyze clean? → fix lints first
-│
-├── registrationStateStream() emits registered? → if no, see Registration
-│
-├── Developer Mode enabled in Meta AI app? → toggle on
-│
-├── activeDeviceStream() emits a non-null device? → if no, see No eligible device
-│
-├── streamSessionStateStream() emits streaming? → if no, see Stream stuck
-│
-└── Texture widget shows black? → check textureId reuse + dispose
+Not working?
+├── dumpDiagnostics().errors non-empty? → fix each finding (below)
+├── registrationStateStream() == registered? → else see Registration
+├── Developer Mode on in Meta AI app?
+├── activeDeviceStream() non-null? → else see No eligible device
+├── deviceSessionErrorStream() / streamErrorStream() emitting? → switch on reason
+└── Texture black? → stale textureId, or stream stopped
 ```
 
-## Use the built-in diagnostics
+## dumpDiagnostics
 
 ```dart
-final diag = await MetaWearablesDat.dumpDiagnostics();
-debugPrint(jsonEncode(diag));
+final d = await MetaWearablesDat.dumpDiagnostics();
+for (final f in d.findings) {
+  debugPrint('${f.severity.name} ${f.id}: ${f.message} -> ${f.fix}');
+}
+debugPrint('sdk ${d.sdkVersion} plugin ${d.pluginVersion}');
+debugPrint('resources ${d.resources} idle=${d.isIdle}');
+debugPrint('experimental ${d.experimentalModulesLinked}');
 ```
 
-Returns the SDK version, `Info.plist` validation results, current
-registration state, paired devices, and per-flag pre-flight checks.
+Same shape on both platforms. `resources` (textures, listeners,
+deviceSessions, cameras, displays, decoders, capabilities, mockDevices)
+must be all zero when idle; a non-zero count after stop is a leak.
+
+Finding ids (iOS `InfoPlistValidator`, Android `ManifestDiagnostics`
+reports equivalents): `mwdatMissing`, `appLinkUrlSchemeMissing`,
+`appLinkUrlSchemeSuffix` (must end with `://`),
+`appLinkUrlSchemeInvalid`, `appLinkUrlSchemeNotRegistered` (scheme not in
+`CFBundleURLTypes`), `clientTokenMissing`, `teamIdMissing`,
+`developerModeCredentials`, `externalAccessoryProtocol`,
+`backgroundMode.<mode>`, `bluetoothUsageMissing`,
+`localNetworkUsageMissing`, `microphoneUsageMissing`, `bonjourServices`,
+`damEnabledIgnored` (`DAMEnabled` / `DAM_ENABLED` are obsolete in 1.0).
+
+## Errors
+
+Every failure is a `DatError` with `category`, `code`, `reason`,
+`platformCase`, `recoveryAction`. Use `recoveryAction`:
+
+| `DatRecoveryAction` | Do |
+|---|---|
+| `openFirmwareUpdate` | `MetaWearablesDat.openFirmwareUpdate()` |
+| `openDatGlassesAppUpdate` | `MetaWearablesDat.openDatGlassesAppUpdate()` |
+| `updateHostApp` | ship a build with a newer plugin/SDK |
+| `checkMetaAiAndRetry` | install/update Meta AI, retry |
+| `connectGlasses` | ask the user to connect/wear glasses |
+| `grantPermission` | `requestPermission(...)` |
+
+`DeviceSessionError.isTerminal` (`insufficientSDKVersion`) means no
+recovery in this build; `isWarning` (`dwaOutOfStuRange`) is
+non-blocking.
 
 ## Registration
 
-### "Internal error" after tapping Allow in Meta AI
-
-Developer Mode is OFF in the Meta AI app.
-
-Fix: Meta AI → Settings → Developer Mode → ON.
-
-### `RegistrationError.configurationInvalid` with raw value 1
-
-Your `Info.plist` `MWDAT` dict is missing a key or the URL scheme has
-an underscore.
-
-Fix: ensure all four keys (`AppLinkURLScheme`, `MetaAppID`, `ClientToken`,
-`TeamID`) are present and the scheme is RFC 3986 compliant.
-
-### `RegistrationError.metaAiNotInstalled`
-
-Meta AI app missing or out of date.
-
-Fix: install/update from the App Store/Play Store.
-
-### Registration deep link never returns
-
-- iOS: `CFBundleURLTypes` not declared, or `SceneDelegate` not
-  forwarding URLs to the plugin.
-- Android: `MainActivity` doesn't extend `FlutterFragmentActivity`, or
-  the intent filter for your scheme is missing.
+- "Internal error" after Allow in Meta AI: Developer Mode off. Meta AI →
+  Settings → App Info → tap version 5 times, then enable Developer Mode.
+- `RegistrationErrorCase.configurationInvalid`: check findings above.
+- `RegistrationErrorCase.metaAINotInstalled`: install/update Meta AI
+  (V290+).
+- Callback never returns: iOS scheme not in `CFBundleURLTypes`; Android
+  `MainActivity` not a `FlutterFragmentActivity` or intent filter missing.
+- Production app id but no new app version created for 1.0 in Wearables
+  Developer Center.
 
 ## Streaming
 
-### "No eligible device available"
-
-The SDK auto-selector found no connected/donned glasses.
-
-Fix sequence:
-
-1. Open Meta AI app, confirm your glasses appear and show "Connected".
-2. Doff and re-don the glasses.
-3. Open `samples/camera_access`, tap "Diagnostics", confirm the active
-   device UUID is non-null. If it is null but `getDevices()` returns
-   entries, force a specific device:
-
-   ```dart
-   final devices = await MetaWearablesDat.getDevices();
-   await MetaWearablesDat.startStreamSession(deviceUUID: devices.first.uuid);
-   ```
-
-### Stream stuck in `waitingForDevice`
-
-- Device disconnected mid-session — restart Bluetooth.
-- Wrong `deviceKinds` filter — broaden or omit.
-- Battery in glasses is low.
-
-### Texture is black
-
-- Texture widget rebuilt with a stale `textureId` — store it once and
-  hold it.
-- `stopStreamSession()` was called and the texture handle wasn't
-  refreshed.
+- `DeviceSessionErrorCase.noEligibleDevice`: glasses not connected/worn.
+  Check Meta AI shows Connected; doff/don; or pass `deviceUUID`.
+- Stuck in `waitingForDevice`: device disconnected, `deviceKinds` too
+  narrow, battery low, hinges closed (`StreamErrorCase.hingesClosed`).
+- `thermalHot` / `ThermalLevel.isThrottling`: let glasses cool.
+- Black texture: stale `textureId` after stop/start, or raw frames paused
+  in iOS background (`rawPausedInBackground`; use `hvc1`).
 
 ## Build issues
 
-### iOS: `Missing MWDATCore`
+| Symptom | Fix |
+|---|---|
+| iOS: `requires minimum platform version 17.2 ... target supports 15.0 (FlutterGeneratedPluginSwiftPackage)` | Set app iOS deployment target to 17.2, run `flutter build ios --config-only` once |
+| iOS: Swift module compiled with newer compiler | Use Xcode 26.4+ |
+| iOS: plugin not resolved / CocoaPods errors | Flutter 3.44+ (SPM default); this plugin is SPM-only |
+| Android: unresolved `mwdat-*` | Ensure `mavenCentral()`; no token needed. Remove old GitHub Packages repo blocks |
+| Android: `PermissionErrorCase.missingFragmentActivity` | `MainActivity : FlutterFragmentActivity()` |
+| `DatPluginError` `EXPERIMENTAL_NOT_LINKED` | App built with `mwdat.experimental=false`; remove it or stop calling experimental APIs |
 
-SPM support not enabled.
-
-Fix: `flutter config --enable-swift-package-manager` then
-`flutter clean && cd ios && rm -rf Pods Podfile.lock && cd ..`.
-
-### iOS: deployment target mismatch
-
-Plugin requires iOS 17.0. Bump
-`IPHONEOS_DEPLOYMENT_TARGET = 17.0` in your `.xcodeproj`.
-
-### Android: Maven 401
-
-`GITHUB_TOKEN` env var missing or lacks `read:packages` scope.
-
-Fix: create a PAT with `read:packages` scope; export `GITHUB_TOKEN`,
-or add `github_token=...` to `android/local.properties`.
-
-### Android: `MISSING_FRAGMENT_ACTIVITY`
-
-`MainActivity` extends `FlutterActivity` instead of
-`FlutterFragmentActivity`.
-
-## Compatibility matrix
-
-| Plugin | Meta DAT SDK | Min iOS | Min Android |
-|--------|--------------|---------|-------------|
-| 0.7.x  | 0.7.0        | 17.0    | API 31      |
-| 0.2.x  | 0.6.0        | 17.0    | API 31      |
-| 0.1.x  | 0.6.0        | 17.0    | API 31      |
-
-## Known issues
+## Known issues (1.0)
 
 | Issue | Workaround |
-|-------|-----------|
-| Streams started while doffed pause when donned | Tap side of glasses to resume |
-| `DeviceStateSession` unreliable with camera stream | Avoid using it concurrently |
-| Android: HEVC `hvc1` has no preview path | Use `VideoCodec.raw` for preview, `hvc1` for recording |
-| iOS: Ray-Ban Display has no audio feedback on pause/resume | Will be fixed by Meta in future release |
+|---|---|
+| Abort in MWDATCore on iOS 18 when anything calls `objc_copyClassList` (XCTest, some SDKs): MWDATCore weakly links iOS 26-only Network/WiFiAware types | Run Swift tests on an iOS 26+ simulator; make sure no app dependency enumerates all classes on iOS < 26 |
+| Android SDK `display.stop()` before `removeDisplay` can NPE | Plugin uses `removeDisplay()` only; no action |
+| `sendMockDisplayClick` identifier format undocumented | Returns true but may not fire `onClick` |
+| Raw frames pause in iOS background | Use `VideoCodec.hvc1` |
 
-## Adding debug logging
+## Compatibility
 
-```dart
-import 'package:flutter/foundation.dart';
-
-MetaWearablesDat.streamSessionStateStream().listen(
-  (state) => debugPrint('stream state: $state'),
-);
-MetaWearablesDat.streamSessionErrorStream().listen(
-  (err) => debugPrint('stream error: $err'),
-);
-```
+| Plugin | Meta DAT | Min iOS | Min Android | Distribution |
+|---|---|---|---|---|
+| 1.0.x | 1.0.0 | 17.2 (SPM, Xcode 26.4+) | API 31, Maven Central | Developer Mode, Beta channel |
+| 0.7.x | 0.7.0 | 17.0 | API 31, GitHub Packages | Developer Mode |
 
 ## Links
 
 - [`doc/troubleshooting.md`](../../doc/troubleshooting.md)
-- Meta known issues:
-  <https://wearables.developer.meta.com/docs/knownissues>
+- [`doc/migration_0.7_to_1.0.md`](../../doc/migration_0.7_to_1.0.md)
+- Meta known issues: <https://wearables.developer.meta.com/docs/knownissues>

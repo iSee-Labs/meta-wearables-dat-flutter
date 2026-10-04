@@ -88,7 +88,7 @@ internal object YuvToArgb {
      * Coefficients are scaled by 1024 = 2^10 so the multiplies and
      * one right-shift produce the same value as the float form.
      */
-    private fun convertI420ToArgb(
+    internal fun convertI420ToArgb(
         yuvBytes: ByteArray,
         argbOut: IntArray,
         width: Int,

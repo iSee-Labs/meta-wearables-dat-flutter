@@ -1,57 +1,56 @@
-/// The kind of a [DisplayPlaybackEvent] emitted by a `VideoPlayer` rendered
-/// on the glasses display.
-///
-/// Mirrors the playback states reported by Meta's DAT SDKs
-/// (`VideoPlayerState` on Android, the `onPlaybackEvent` callback on iOS).
+/// Video playback transitions reported for a `VideoPlayer`.
 enum DisplayPlaybackEventType {
-  /// Playback has begun (or resumed).
-  playing('playing'),
+  /// Playback started.
+  started('started'),
 
-  /// Playback has been paused.
+  /// Android: playback paused.
   paused('paused'),
 
-  /// Playback reached the end of the media.
+  /// Playback reached the end.
   ended('ended'),
 
-  /// Playback was stopped before completing.
+  /// Playback was stopped.
   stopped('stopped'),
 
-  /// The player reported an error.
+  /// Playback failed.
   error('error'),
 
-  /// An event the plugin did not recognise.
+  /// Not recognised.
   unknown('unknown');
 
   const DisplayPlaybackEventType(this.wireName);
 
-  /// The string used on the platform channel.
+  /// The wire name.
   final String wireName;
 
-  /// Maps a platform-channel string to a [DisplayPlaybackEventType].
+  /// Former name of [started].
+  @Deprecated('Use started')
+  static const DisplayPlaybackEventType playing = started;
+
+  /// Parses the wire name; `playing` (pre-1.0) maps to [started].
   static DisplayPlaybackEventType fromWire(String? wire) {
-    for (final value in DisplayPlaybackEventType.values) {
+    if (wire == 'playing') return started;
+    for (final value in values) {
       if (value.wireName == wire) return value;
     }
-    return DisplayPlaybackEventType.unknown;
+    return unknown;
   }
 }
 
-/// A playback event delivered to a `VideoPlayer`'s `onPlaybackEvent`
-/// callback while it is rendered on the glasses display.
+/// A playback event for the `VideoPlayer` on screen.
 class DisplayPlaybackEvent {
   /// Creates a [DisplayPlaybackEvent].
   const DisplayPlaybackEvent({required this.type});
 
-  /// Builds a [DisplayPlaybackEvent] from a platform-channel map.
-  factory DisplayPlaybackEvent.fromMap(Map<Object?, Object?> map) {
-    return DisplayPlaybackEvent(
-      type: DisplayPlaybackEventType.fromWire(map['event'] as String?),
-    );
-  }
+  /// Decodes a `display_events` map.
+  factory DisplayPlaybackEvent.fromMap(Map<Object?, Object?> map) =>
+      DisplayPlaybackEvent(
+        type: DisplayPlaybackEventType.fromWire(map['event'] as String?),
+      );
 
-  /// The kind of playback transition this event represents.
+  /// What happened.
   final DisplayPlaybackEventType type;
 
   @override
-  String toString() => 'DisplayPlaybackEvent(type: ${type.wireName})';
+  String toString() => 'DisplayPlaybackEvent(${type.wireName})';
 }

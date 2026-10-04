@@ -1,55 +1,36 @@
-/// Lifecycle state of an underlying [DeviceSession].
-///
-/// Distinct from `StreamSessionState`: the `DeviceSession` is the long-lived
-/// connection to a specific paired wearable that the plugin owns on your
-/// behalf. A `StreamSession` is one capability attached to that device
-/// session (video streaming, in this plugin).
-///
-/// Surfaced by `MetaWearablesDat.deviceSessionStateStream()`. Mirrors the
-/// `DeviceSessionState` enum in Meta's iOS / Android DAT SDKs.
+/// State of the device session shared by camera, display and the
+/// experimental capabilities.
 enum DeviceSessionState {
-  /// Created but not yet started.
-  idle(0),
+  /// Created, not started.
+  idle,
 
-  /// `start()` has been called; the SDK is still negotiating with the
-  /// device.
-  starting(1),
+  /// Connecting to the glasses.
+  starting,
 
-  /// The device session is live; streams can be added.
-  started(2),
+  /// Running.
+  started,
 
-  /// Temporarily paused (e.g. hinges closed, thermal limit).
-  paused(3),
+  /// Paused by the device (for example the glasses were taken off).
+  paused,
 
-  /// `stop()` has been called; the device session is tearing down.
-  stopping(4),
+  /// Stopping.
+  stopping,
 
-  /// Terminal state — a fresh `createSession()` is required to use the
-  /// device again.
-  stopped(5);
+  /// Stopped. A new session is created on the next start.
+  stopped;
 
-  const DeviceSessionState(this.value);
-
-  /// The integer used on the platform channel.
-  final int value;
-
-  /// Maps a platform-channel integer to a [DeviceSessionState].
-  static DeviceSessionState fromInt(int? value) {
-    switch (value) {
-      case 0:
-        return DeviceSessionState.idle;
-      case 1:
-        return DeviceSessionState.starting;
-      case 2:
-        return DeviceSessionState.started;
-      case 3:
-        return DeviceSessionState.paused;
-      case 4:
-        return DeviceSessionState.stopping;
-      case 5:
-        return DeviceSessionState.stopped;
-      case _:
-        return DeviceSessionState.idle;
+  /// Parses the wire name; unknown values map to [idle].
+  static DeviceSessionState fromWire(Object? raw) {
+    for (final value in values) {
+      if (value.name == raw) return value;
     }
+    return idle;
   }
+
+  /// Parses the integer encoding used before 1.0.
+  @Deprecated('State now travels as a string; use fromWire')
+  static DeviceSessionState fromInt(int? value) =>
+      value != null && value >= 0 && value < values.length
+      ? values[value]
+      : idle;
 }

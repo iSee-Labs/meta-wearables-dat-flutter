@@ -30,7 +30,8 @@ class _StreamScreenState extends State<StreamScreen> {
   bool _starting = false;
 
   StreamSubscription<StreamSessionState>? _stateSub;
-  StreamSubscription<Object>? _errorSub;
+  StreamSubscription<StreamError>? _errorSub;
+  StreamSubscription<DeviceSessionError>? _sessionErrorSub;
   StreamSubscription<VideoStreamSize>? _sizeSub;
   StreamSubscription<VideoFrame>? _framesSub;
 
@@ -41,27 +42,27 @@ class _StreamScreenState extends State<StreamScreen> {
   @override
   void initState() {
     super.initState();
-    _stateSub = MetaWearablesDat.streamSessionStateStream().listen(
-      (s) {
-        if (mounted) setState(() => _sessionState = s);
-      },
+    _stateSub = MetaWearablesDat.streamSessionStateStream().listen((s) {
+      if (mounted) setState(() => _sessionState = s);
+    });
+    _errorSub = MetaWearablesDat.streamErrorStream().listen((e) {
+      if (mounted) setState(() => _error = _describe(e));
+    });
+    // Device-session errors carry update requirements (firmware, the DAT
+    // app on the glasses) that the user can resolve from here.
+    _sessionErrorSub = MetaWearablesDat.deviceSessionErrorStream().listen(
+      _onSessionError,
     );
-    _errorSub = MetaWearablesDat.streamSessionErrorStream().listen(
-      (e) {
-        if (mounted) setState(() => _error = e.toString());
-      },
-    );
-    _sizeSub = MetaWearablesDat.videoStreamSizeStream().listen(
-      (s) {
-        if (mounted) setState(() => _size = s);
-      },
-    );
+    _sizeSub = MetaWearablesDat.videoStreamSizeStream().listen((s) {
+      if (mounted) setState(() => _size = s);
+    });
   }
 
   @override
   void dispose() {
     _stateSub?.cancel();
     _errorSub?.cancel();
+    _sessionErrorSub?.cancel();
     _sizeSub?.cancel();
     _framesSub?.cancel();
     unawaited(_recordingSink?.close());
@@ -69,6 +70,38 @@ class _StreamScreenState extends State<StreamScreen> {
       unawaited(MetaWearablesDat.stopStreamSession());
     }
     super.dispose();
+  }
+
+  void _onSessionError(DeviceSessionError error) {
+    if (!mounted) return;
+    setState(() => _error = _describe(error));
+    final fix = switch (error.recoveryAction) {
+      DatRecoveryAction.openFirmwareUpdate =>
+        MetaWearablesDat.openFirmwareUpdate,
+      DatRecoveryAction.openDatGlassesAppUpdate =>
+        MetaWearablesDat.openDatGlassesAppUpdate,
+      _ => null,
+    };
+    if (fix == null) return;
+    ScaffoldMessenger.of(context).showMaterialBanner(
+      MaterialBanner(
+        content: Text(_describe(error)),
+        actions: [
+          TextButton(
+            onPressed: () {
+              ScaffoldMessenger.of(context).hideCurrentMaterialBanner();
+              unawaited(fix());
+            },
+            child: const Text('Update'),
+          ),
+          TextButton(
+            onPressed: () =>
+                ScaffoldMessenger.of(context).hideCurrentMaterialBanner(),
+            child: const Text('Later'),
+          ),
+        ],
+      ),
+    );
   }
 
   bool get _isRunning => _textureId != null;
@@ -95,9 +128,13 @@ class _StreamScreenState extends State<StreamScreen> {
       final devices = await MetaWearablesDat.getDevices();
       final id = await MetaWearablesDat.startStreamSession(
         deviceUUID: devices.isNotEmpty ? devices.first.uuid : null,
-        fps: _settings.fps,
-        quality: _settings.quality,
-        videoCodec: _settings.codec,
+        config: StreamSessionConfig(
+          frameRate: StreamFrameRate.values.firstWhere(
+            (r) => r.value == _settings.fps,
+          ),
+          quality: _settings.quality,
+          videoCodec: _settings.codec,
+        ),
       );
       if (!mounted) return;
       setState(() => _textureId = id);
@@ -105,7 +142,7 @@ class _StreamScreenState extends State<StreamScreen> {
         await _enableBackground();
       }
     } on DatError catch (e) {
-      if (mounted) setState(() => _error = '${e.code}: ${e.message}');
+      if (mounted) setState(() => _error = _describe(e));
     } finally {
       if (mounted) setState(() => _starting = false);
     }
@@ -120,7 +157,7 @@ class _StreamScreenState extends State<StreamScreen> {
       await MetaWearablesDat.stopStreamSession();
       if (mounted) setState(() => _textureId = null);
     } on DatError catch (e) {
-      if (mounted) setState(() => _error = '${e.code}: ${e.message}');
+      if (mounted) setState(() => _error = _describe(e));
     }
   }
 
@@ -144,7 +181,7 @@ class _StreamScreenState extends State<StreamScreen> {
       if (!mounted) return;
       _showPhotoSheet(photo);
     } on DatError catch (e) {
-      if (mounted) setState(() => _error = '${e.code}: ${e.message}');
+      if (mounted) setState(() => _error = _describe(e));
     }
   }
 
@@ -159,7 +196,7 @@ class _StreamScreenState extends State<StreamScreen> {
       if (!mounted || frame == null) return;
       _showImageSheet('Frame (${frame.format.name})', frame.bytes);
     } on DatError catch (e) {
-      if (mounted) setState(() => _error = '${e.code}: ${e.message}');
+      if (mounted) setState(() => _error = _describe(e));
     }
   }
 
@@ -257,9 +294,7 @@ class _StreamScreenState extends State<StreamScreen> {
           children: [
             Text(title, style: Theme.of(sheetCtx).textTheme.titleMedium),
             const SizedBox(height: 12),
-            Flexible(
-              child: Image.memory(bytes, fit: BoxFit.contain),
-            ),
+            Flexible(child: Image.memory(bytes, fit: BoxFit.contain)),
             const SizedBox(height: 12),
             FilledButton(
               onPressed: () => Navigator.of(sheetCtx).pop(),
@@ -285,9 +320,7 @@ class _StreamScreenState extends State<StreamScreen> {
               style: Theme.of(sheetCtx).textTheme.titleMedium,
             ),
             const SizedBox(height: 12),
-            Flexible(
-              child: Image.memory(photo.bytes, fit: BoxFit.contain),
-            ),
+            Flexible(child: Image.memory(photo.bytes, fit: BoxFit.contain)),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -367,8 +400,9 @@ class _StreamScreenState extends State<StreamScreen> {
                   const SizedBox(height: 4),
                   Text(
                     'Recording • $_recordedFrames frames written',
-                    style:
-                        TextStyle(color: Theme.of(context).colorScheme.error),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
                   ),
                 ],
                 if (_error != null) ...[
@@ -441,4 +475,22 @@ class _StreamScreenState extends State<StreamScreen> {
       ),
     );
   }
+}
+
+/// A short, user-facing description of [error] with the suggested next step.
+String _describe(DatError error) {
+  final hint = switch (error.recoveryAction) {
+    DatRecoveryAction.connectGlasses =>
+      ' Check that the glasses are on, open and worn.',
+    DatRecoveryAction.grantPermission =>
+      ' Grant the camera permission in Meta AI.',
+    DatRecoveryAction.openFirmwareUpdate => ' Update the glasses firmware.',
+    DatRecoveryAction.openDatGlassesAppUpdate =>
+      ' Update the DAT app on the glasses.',
+    DatRecoveryAction.updateHostApp => ' Update this app.',
+    DatRecoveryAction.checkMetaAiAndRetry => ' Open Meta AI and try again.',
+    DatRecoveryAction.suggestUpdate => ' An update is recommended.',
+    DatRecoveryAction.none => '',
+  };
+  return '${error.category}/${error.code}: ${error.message}$hint';
 }

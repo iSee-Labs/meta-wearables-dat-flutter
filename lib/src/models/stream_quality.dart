@@ -1,42 +1,60 @@
-/// Quality preset for [MetaWearablesDat.startStreamSession].
-///
-/// Each preset corresponds to a fixed resolution that Meta's SDK accepts on
-/// both Ray-Ban Meta and Oakley Meta. Higher quality means more bandwidth
-/// over Bluetooth and higher CPU on the I420 -> ARGB conversion path on
-/// Android.
-///
-/// Frame rate is independent of [StreamQuality]. Pick from
-/// [StreamQuality.fpsValues].
-///
-/// | Quality | Resolution (W x H) |
-/// | ------- | ------------------ |
-/// | low     | 360 x 640          |
-/// | medium  | 504 x 896          |
-/// | high    | 720 x 1280         |
+/// Camera stream resolution. The SDK may lower it under poor bandwidth.
 enum StreamQuality {
   /// 360 x 640.
   low(0, 360, 640),
 
-  /// 504 x 896. Default.
+  /// 504 x 896.
   medium(1, 504, 896),
 
-  /// 720 x 1280. Highest CPU and bandwidth cost.
+  /// 720 x 1280.
   high(2, 720, 1280);
 
   const StreamQuality(this.value, this.width, this.height);
 
-  /// The integer used on the platform channel.
+  /// Ordinal kept for compatibility.
   final int value;
 
-  /// Pixel width of frames at this quality.
+  /// Nominal width in pixels (portrait).
   final int width;
 
-  /// Pixel height of frames at this quality.
+  /// Nominal height in pixels (portrait).
   final int height;
 
-  /// Allowed values for the `fps` argument to
-  /// [MetaWearablesDat.startStreamSession]. The SDK accepts only this
-  /// discrete set; values outside the list are clamped to the closest
-  /// supported FPS by Meta's SDK.
+  /// Frame rates the SDK accepts.
   static const List<int> fpsValues = [2, 7, 15, 24, 30];
+}
+
+/// Frame rates the DAT SDK accepts. Under limited bandwidth the SDK lowers
+/// resolution first, then frame rate, but never below 15 fps.
+enum StreamFrameRate {
+  /// 2 fps.
+  fps2(2),
+
+  /// 7 fps.
+  fps7(7),
+
+  /// 15 fps.
+  fps15(15),
+
+  /// 24 fps (SDK default).
+  fps24(24),
+
+  /// 30 fps.
+  fps30(30);
+
+  const StreamFrameRate(this.value);
+
+  /// Frames per second.
+  final int value;
+
+  /// Returns the matching rate, or throws [ArgumentError] for unsupported
+  /// values.
+  static StreamFrameRate fromFps(int fps) => values.firstWhere(
+    (rate) => rate.value == fps,
+    orElse: () => throw ArgumentError.value(
+      fps,
+      'fps',
+      'Must be one of 2, 7, 15, 24, 30',
+    ),
+  );
 }

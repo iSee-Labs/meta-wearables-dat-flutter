@@ -1,52 +1,58 @@
-/// State of an active [StreamSession] (the video-streaming capability
-/// attached to a `DeviceSession`).
-///
-/// Surfaced by `MetaWearablesDat.streamSessionStateStream()`. Mirrors the
-/// underlying `StreamSessionState` from Meta's DAT SDKs.
+/// State of the camera stream.
 enum StreamSessionState {
-  /// No stream is active.
-  stopped(0),
+  /// Not streaming.
+  stopped,
 
-  /// The stream has been requested but the SDK is still waiting for the
-  /// device to be ready (e.g. paired but not yet connected).
-  waitingForDevice(1),
+  /// Waiting for the glasses (iOS).
+  waitingForDevice,
 
-  /// The stream has been opened and is configuring.
-  starting(2),
+  /// Starting.
+  starting,
 
   /// Frames are flowing.
-  streaming(3),
+  streaming,
 
-  /// The stream is paused. Pauses can be initiated by the SDK (thermal,
-  /// hinges closed, app backgrounded) and may not be triggerable from the
-  /// host app on every device generation.
-  paused(4),
+  /// Paused by the device (captouch tap, glasses taken off).
+  paused,
 
-  /// The stream is being torn down.
-  stopping(5);
+  /// Stopping.
+  stopping;
 
-  const StreamSessionState(this.value);
-
-  /// The integer used on the platform channel.
-  final int value;
-
-  /// Maps a platform-channel integer to a [StreamSessionState].
-  static StreamSessionState fromInt(int? value) {
-    switch (value) {
-      case 0:
-        return StreamSessionState.stopped;
-      case 1:
-        return StreamSessionState.waitingForDevice;
-      case 2:
-        return StreamSessionState.starting;
-      case 3:
-        return StreamSessionState.streaming;
-      case 4:
-        return StreamSessionState.paused;
-      case 5:
-        return StreamSessionState.stopping;
-      case _:
-        return StreamSessionState.stopped;
+  /// Parses the wire name; unknown values map to [stopped].
+  static StreamSessionState fromWire(Object? raw) {
+    for (final value in values) {
+      if (value.name == raw) return value;
     }
+    return stopped;
+  }
+
+  /// Parses the integer encoding used before 1.0.
+  @Deprecated('State now travels as a string; use fromWire')
+  static StreamSessionState fromInt(int? value) =>
+      value != null && value >= 0 && value < values.length
+      ? values[value]
+      : stopped;
+}
+
+/// State of the camera capability that owns the stream.
+enum CameraState {
+  /// Starting.
+  starting,
+
+  /// Started.
+  started,
+
+  /// Stopping.
+  stopping,
+
+  /// Stopped.
+  stopped;
+
+  /// Parses the wire name; unknown values map to [stopped].
+  static CameraState fromWire(Object? raw) {
+    for (final value in values) {
+      if (value.name == raw) return value;
+    }
+    return stopped;
   }
 }

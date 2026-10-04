@@ -1,563 +1,511 @@
-# Meta Wearables Device Access Toolkit for Flutter
+> **Unofficial.** This plugin is not affiliated with, endorsed by, sponsored
+> by, or officially connected to Meta Platforms, Inc. "Meta", "Ray-Ban Meta",
+> "Oakley Meta", and "Ray-Ban Display" are trademarks of their respective
+> owners.
+
+# meta_wearables_dat_flutter
 
 [![pub package](https://img.shields.io/pub/v/meta_wearables_dat_flutter.svg)](https://pub.dev/packages/meta_wearables_dat_flutter)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![style: very good analysis](https://img.shields.io/badge/style-very_good_analysis-B22C89.svg)](https://pub.dev/packages/very_good_analysis)
-[![Flutter](https://img.shields.io/badge/flutter-%3E%3D3.32.0-blue.svg)](https://flutter.dev)
+[![Flutter](https://img.shields.io/badge/flutter-%3E%3D3.44.0-blue.svg)](https://flutter.dev)
 
-A Flutter plugin that brings Meta's Wearables Device Access Toolkit (DAT)
-to iOS and Android. Connect to Ray-Ban Meta, Oakley Meta, and Ray-Ban
-Display glasses — registration, live video streaming, photo capture,
-declarative on-glasses Display Access UI, the Mock Device Kit, and
-background streaming — all behind a single Dart API.
+A Flutter plugin for Meta's Wearables Device Access Toolkit (DAT) on iOS and
+Android. It links Meta's official native SDKs and exposes one Dart API for
+Ray-Ban Meta, Oakley Meta, and Meta Ray-Ban Display glasses: registration,
+permissions, device state, camera streaming into a Flutter `Texture`, photo
+capture, on-glasses Display UI, the Mock Device Kit, and Meta's experimental
+modules.
 
-Wraps Meta's official DAT SDKs (v0.7.0) as binary dependencies. The DAT
-is in developer preview; apps cannot yet ship publicly via the App Store
-or Play Store. Create an organisation and release channel in the
-[Wearables Developer Center](https://wearables.developer.meta.com/) to
-share builds with test users.
+It is a bridge, not a reimplementation. Meta's SDKs are closed-source
+binaries that this plugin depends on.
 
-> **Unofficial.** Not affiliated with, endorsed by, or officially connected
-> to Meta Platforms, Inc. "Meta", "Ray-Ban Meta", "Oakley Meta", and
-> "Ray-Ban Display" are trademarks of their respective owners.
+## Status
 
-## Documentation & Community
+| | |
+|---|---|
+| Plugin version | **1.0.0** |
+| Meta DAT version | **1.0.0** (Meta's first stable, supported release) |
+| Distribution | Developer Mode and the invite-only **Beta release channel** in the [Wearables Developer Center](https://wearables.developer.meta.com/). Meta does not yet support publishing DAT apps to the App Store. |
+| Developer Center | Create a **new app version** for builds made with DAT 1.0. |
+| Verification | 1.0.0 is verified against Meta's Mock Device Kit on the iOS Simulator and Android emulator, plus unit tests on every layer. The real-glasses matrix in [`doc/release_checklist.md`](doc/release_checklist.md) is still open; report hardware findings as issues. |
 
-Find Meta's full
-[developer documentation](https://wearables.developer.meta.com/docs/develop/)
-on the Wearables Developer Center.
+## Features
 
-Plugin-specific guides live in [`doc/`](doc/):
+| Feature | iOS | Android | Notes |
+|---|:-:|:-:|---|
+| Registration (app-initiated) | Yes | Yes | `startRegistration()`; the plugin hands the callback URL to the SDK |
+| Registration started from Meta AI | Yes | Yes | `registrationRequestStream()` |
+| Permissions (camera, microphone) | Yes | Yes | `requestPermission(Permission.camera)` |
+| Device list and live state | Yes | Yes | Battery, charging, wear, hinge, thermal, link, compatibility |
+| Camera preview, raw codec, Flutter texture | Yes | Yes | No frames over the method channel |
+| Camera preview, `hvc1` codec, Flutter texture | Yes | Yes | VideoToolbox on iOS, MediaCodec on Android |
+| Opt-in per-frame stream | Yes | Yes | `videoFramesStream()`, gated on listeners |
+| Photo capture (JPEG, HEIC) | Yes | Yes | `capturePhoto()` |
+| Background streaming | Yes | Yes | Audio session on iOS, foreground service on Android |
+| Display (Meta Ray-Ban Display) | Yes | Yes | Declarative component DSL with callbacks |
+| Diagnostics | Yes | Yes | Info.plist / manifest findings, resource ledger |
+| Mock Device Kit | Yes | Yes | Simulated glasses, camera feed, permissions, display |
+| Experimental modules | Yes | Yes | Inputs, Motion, Speech, voice invocations, high-res photo, in-stream audio |
 
-- [`doc/getting_started.md`](doc/getting_started.md) — pubspec, iOS
-  `Info.plist`, Android `AndroidManifest.xml`, Developer Mode.
-- [`doc/registration_flow.md`](doc/registration_flow.md) — registration
-  deep-link wiring.
-- [`doc/streaming.md`](doc/streaming.md) — texture rendering, video
-  codecs, photo capture, background streaming.
-- [`doc/frame_processing.md`](doc/frame_processing.md) — opt-in
-  per-frame `videoFramesStream`, recording, OCR/ML pipelines.
-- [`doc/display_access.md`](doc/display_access.md) — declarative UI on
-  Ray-Ban Display glasses (FlexBox/Text/Image/Button/Icon/VideoPlayer).
-- [`doc/mock_device.md`](doc/mock_device.md) — Mock Device Kit.
-- [`doc/troubleshooting.md`](doc/troubleshooting.md) — common
-  pitfalls.
+## Requirements
 
-For help or to suggest feature ideas, open an issue on
-[GitHub](https://github.com/iSee-Labs/meta-wearables-dat-flutter/issues).
+| | Minimum |
+|---|---|
+| Flutter | 3.44.0 (Dart 3.8) |
+| iOS | 17.2, **Swift Package Manager only** (CocoaPods is not supported for this plugin) |
+| Xcode | 26.4 (Meta's binaries are built with Swift 6.3) |
+| Android | `minSdk 31`, `MainActivity` extends `FlutterFragmentActivity` |
+| Android SDK source | Maven Central (no GitHub token) |
+| Meta AI app | V290 |
+| Glasses firmware | V128 |
 
-See the [changelog](CHANGELOG.md) for the latest updates.
+Turn on Developer Mode in the Meta AI app: **Settings > App Info**, tap the
+version number five times.
 
-## Compatible devices
-
-- Ray-Ban Meta (Gen 1 and Gen 2)
-- Oakley Meta (HSTN, Vanguard)
-- Ray-Ban Display
-
-A paired phone running the **Meta AI** companion app with **Developer
-Mode** enabled is required during the developer preview.
-
-## Including the SDK in your project
+## Install
 
 ```yaml
 dependencies:
-  meta_wearables_dat_flutter: ^0.7.1
+  meta_wearables_dat_flutter: ^1.0.0
 ```
 
 ```bash
 flutter pub get
 ```
 
-### Enable Developer Mode in the Meta AI app (one-time, per phone)
+## iOS setup
 
-> **STOP — do this before running anything.** Until your app is approved
-> in the Wearables Developer Center, registration is gated by a toggle
-> inside the Meta AI mobile app. The manifest values below (`MetaAppID =
-> "0"`, `CLIENT_TOKEN = "0"`) are *only* the code-side half of the
-> handshake; without the phone-side toggle the SDK will fail with:
->
-> - **iOS**: `Internal error` toast in Meta AI immediately after you tap
->   **Allow**, your app never receives the deep link.
-> - **Android**: `RegistrationError(code: HTTP_REQUEST_FAILED, ...)`
->   with HTTP 401 from `api2.ar.meta.com` because the SDK falls back to
->   real attestation.
->
-> Both symptoms disappear the instant the toggle is on.
-
-1. Open the **Meta AI** app on the same phone you'll run your Flutter
-   app on (the one paired with your glasses).
-2. Tap your profile/avatar → **Settings** → scroll to the bottom →
-   toggle **Developer Mode** on. (Older builds: **Settings →
-   Advanced → Developer Mode**.)
-3. Restart your Flutter app and try `startRegistration()` again.
-
-The matching code-side switches are `MetaAppID = "0"` in your iOS
-`Info.plist` and `APPLICATION_ID = "0"` + `CLIENT_TOKEN = "0"` in your
-Android `<meta-data>` — already set in the snippets below.
-
-### iOS
-
-Pick **any short alphanumeric** URL scheme for your app (no
-underscores — they break Meta's redirect-URL builder). Examples:
-`mywearablesapp`, `metasdkdemo`. The snippets below assume
-`mywearablesapp`; replace it everywhere it appears.
-
-#### 1. Enable Swift Package Manager (once per machine)
-
-```bash
-flutter config --enable-swift-package-manager
-```
-
-#### 2. Raise the iOS deployment target to 17.0
-
-The plugin's iOS SDK requires iOS 17 minimum. Set it in **two**
-places — they must match or the build fails:
-
-`ios/Podfile` (uncomment / set the top line):
-
-```ruby
-platform :ios, '17.0'
-```
-
-`ios/Runner.xcodeproj` → open `ios/Runner.xcworkspace` in Xcode →
-**Runner** target → **General** → **Minimum Deployments** → set
-**iOS** to **17.0**.
-
-Then refresh CocoaPods:
-
-```bash
-cd ios && pod install && cd ..
-```
-
-#### 3. Add the `MWDAT` dict and related keys to `ios/Runner/Info.plist`
-
-The DAT SDK validates the `MWDAT` dict as **all-or-nothing
-attestation** — all four keys (`AppLinkURLScheme`, `MetaAppID`,
-`ClientToken`, `TeamID`) must be present and non-empty or
-`startRegistration()` throws `RegistrationError.configurationInvalid`
-before Meta AI even opens. Paste this block inside the root `<dict>`
-of `Info.plist`:
+1. Set the deployment target to **17.2** in Xcode (Runner target > General >
+   Minimum Deployments).
+2. Swift Package Manager is Flutter's default since 3.44. If you turned it
+   off, run `flutter config --enable-swift-package-manager`.
+3. Add the keys below to `ios/Runner/Info.plist`. Replace `myapp` with your
+   own scheme (letters, digits, `+`, `-`, `.`; no underscores).
 
 ```xml
-<!-- Begin required section for Meta Wearables Device Access Toolkit. -->
 <key>MWDAT</key>
 <dict>
-  <!-- MUST end with "://". Meta AI builds the callback URL by literally
-       concatenating this value with "?authorityKey=...&metaWearablesAction=
-       register&..."; without the separator the URL is malformed and iOS
-       silently drops it. The scheme itself (without "://") must also be
-       listed under CFBundleURLTypes below. RFC 3986 — alphanumeric, no
-       underscores. -->
+  <!-- Must end with "://". Meta AI appends the callback query to it. -->
   <key>AppLinkURLScheme</key>
-  <string>mywearablesapp://</string>
-
-  <!-- "0" = Developer Mode sentinel. Pairs with the Meta AI app's
-       Developer Mode toggle (see above). The SDK skips Wearables
-       Developer Center attestation when MetaAppID is "0". -->
+  <string>myapp://</string>
+  <!-- "0" in Developer Mode; your app id from the Developer Center otherwise. -->
   <key>MetaAppID</key>
   <string>0</string>
-
-  <!-- Required to be present and non-empty. The value is not validated
-       in Developer Mode. For a published app, replace with the value
-       from https://developers.meta.com/wearables/. -->
   <key>ClientToken</key>
   <string>developer-mode-placeholder</string>
-
-  <!-- $(DEVELOPMENT_TEAM) is expanded by Xcode at build time from
-       Signing & Capabilities. -->
   <key>TeamID</key>
   <string>$(DEVELOPMENT_TEAM)</string>
-
-  <!-- Opt out of the SDK's analytics uploads to api2.ar.meta.com so a
-       partial telemetry config in Developer Mode cannot fail
-       registration with a misleading "Internal error". -->
-  <key>Analytics</key>
-  <dict>
-    <key>OptOut</key>
-    <true/>
-  </dict>
 </dict>
 
-<!-- The OS routes the Meta AI deep-link callback to whichever app
-     declares the matching scheme here. The string MUST match
-     AppLinkURLScheme above, WITHOUT the trailing "://". -->
 <key>CFBundleURLTypes</key>
 <array>
   <dict>
     <key>CFBundleURLSchemes</key>
     <array>
-      <string>mywearablesapp</string>
+      <string>myapp</string>
     </array>
   </dict>
 </array>
 
-<!-- The DAT SDK preflights `canOpenURL("fb-viewapp://...")` before
-     it'll try to open Meta AI. Without `fb-viewapp` here iOS returns
-     false and the SDK throws configurationInvalid (raw 1) before
-     Meta AI even opens. -->
 <key>LSApplicationQueriesSchemes</key>
 <array>
   <string>fb-viewapp</string>
-</array>
-
-<!-- Streaming session requires `audio` to be declared even if you
-     never start a stream during registration. The other three keep
-     the BT + glasses transport alive in the background. -->
-<key>UIBackgroundModes</key>
-<array>
-  <string>audio</string>
-  <string>bluetooth-central</string>
-  <string>bluetooth-peripheral</string>
-  <string>external-accessory</string>
-</array>
-
-<key>NSBluetoothAlwaysUsageDescription</key>
-<string>Needed to connect to Meta AI Glasses.</string>
-<key>NSLocalNetworkUsageDescription</key>
-<string>Allows your phone to find and connect to your glasses over Wi-Fi.</string>
-
-<key>NSBonjourServices</key>
-<array>
-  <string>_bonjour._tcp</string>
 </array>
 
 <key>UISupportedExternalAccessoryProtocols</key>
 <array>
   <string>com.meta.ar.wearable</string>
 </array>
-<!-- End required section for Meta Wearables Device Access Toolkit. -->
+
+<key>UIBackgroundModes</key>
+<array>
+  <string>bluetooth-central</string>    <!-- required -->
+  <string>external-accessory</string>   <!-- required -->
+  <string>bluetooth-peripheral</string> <!-- recommended -->
+  <string>processing</string>           <!-- recommended -->
+  <string>audio</string>                <!-- for enableBackgroundStreaming() -->
+</array>
+
+<key>NSBluetoothAlwaysUsageDescription</key>
+<string>Connects to your glasses.</string>
+<key>NSLocalNetworkUsageDescription</key>
+<string>Finds and connects to your glasses over Wi-Fi.</string>
+<key>NSBonjourServices</key>
+<array>
+  <string>_bonjour._tcp</string>
+</array>
+<!-- Needed when you declare the audio background mode or use Speech. -->
+<key>NSMicrophoneUsageDescription</key>
+<string>Uses the glasses microphone.</string>
 ```
 
-#### 4. Forward Meta AI's deep-link callback (scene-based apps)
+`DAMEnabled` is obsolete in DAT 1.0; remove it. Apps that use a scene-based
+lifecycle (`SceneDelegate`) must forward incoming URLs to the plugin; see
+[`doc/registration_flow.md`](doc/registration_flow.md). Run
+`MetaWearablesDat.dumpDiagnostics()` to check the result.
 
-Flutter ≥ 3.32 generates a scene-based iOS lifecycle (a
-`UIApplicationSceneManifest` block in `Info.plist` and a
-`ios/Runner/SceneDelegate.swift`). On those apps iOS delivers the
-Meta AI callback URL to your **host app's** `SceneDelegate`, not to
-the plugin — and `FlutterSceneDelegate` does not auto-forward URLs to
-plugins. Replace `ios/Runner/SceneDelegate.swift` with:
+## Android setup
 
-```swift
-import Flutter
-import UIKit
+1. Make `MainActivity` extend `FlutterFragmentActivity`:
 
-class SceneDelegate: FlutterSceneDelegate {
+   ```kotlin
+   import io.flutter.embedding.android.FlutterFragmentActivity
 
-  override func scene(
-    _ scene: UIScene,
-    willConnectTo session: UISceneSession,
-    options connectionOptions: UIScene.ConnectionOptions
-  ) {
-    super.scene(scene, willConnectTo: session, options: connectionOptions)
-    forward(urlContexts: connectionOptions.urlContexts)
-  }
+   class MainActivity : FlutterFragmentActivity()
+   ```
 
-  override func scene(
-    _ scene: UIScene,
-    openURLContexts URLContexts: Set<UIOpenURLContext>
-  ) {
-    super.scene(scene, openURLContexts: URLContexts)
-    forward(urlContexts: URLContexts)
-  }
-
-  private func forward(urlContexts: Set<UIOpenURLContext>) {
-    for context in urlContexts {
-      NotificationCenter.default.post(
-        name: Notification.Name("MetaWearablesDatHandleURL"),
-        object: nil,
-        userInfo: ["url": context.url],
-      )
-    }
-  }
-}
-```
-
-The plugin subscribes to `MetaWearablesDatHandleURL` at registration
-time and routes the URL to the SDK natively — you do **not** call
-`handleUrl(...)` from Dart. If your app uses the classic AppDelegate
-lifecycle (no scene manifest), skip this step; the plugin
-auto-consumes the URL via `application(_:open:options:)`.
-
-### Android
-
-Pick the same URL scheme you used on iOS (without the `://`
-suffix). The snippets below use `mywearablesapp`; replace it
-everywhere.
-
-#### 1. Make `MainActivity` extend `FlutterFragmentActivity`
-
-`android/app/src/main/kotlin/.../MainActivity.kt`:
-
-```kotlin
-import io.flutter.embedding.android.FlutterFragmentActivity
-
-class MainActivity : FlutterFragmentActivity()
-```
-
-Meta's camera-permission contract requires a `ComponentActivity`;
-`FlutterFragmentActivity` qualifies, `FlutterActivity` doesn't.
-
-#### 2. Set `minSdk = 31` and use NDK 28.2.13676358
-
-In `android/app/build.gradle.kts`:
-
-```kotlin
-android {
-    // Meta's `mwdat-core` AAR was built with NDK r27, but most Flutter
-    // plugin transitive deps (e.g. `jni`) require r28.2. NDK is
-    // backward compatible per AGP's "use highest" rule.
-    ndkVersion = "28.2.13676358"
-
-    defaultConfig {
-        minSdk = 31
-    }
-}
-```
-
-#### 3. Add Meta's GitHub Packages Maven repo
-
-The Meta Android DAT SDK is published to GitHub Packages and
-requires a PAT with the `read:packages` scope.
-
-In `android/settings.gradle.kts`, inside
-`dependencyResolutionManagement { repositories { ... } }`:
-
-```kotlin
-maven {
-    url = uri("https://maven.pkg.github.com/facebook/meta-wearables-dat-android")
-    credentials {
-        username = "" // not needed; the PAT carries the user
-        password = System.getenv("GITHUB_TOKEN")
-            ?: providers.gradleProperty("github_token").orNull
-            ?: ""
-    }
-}
-```
-
-Then either export `GITHUB_TOKEN` in your shell or add to
-`android/local.properties`:
-
-```properties
-github_token=ghp_yourPersonalAccessTokenWithReadPackagesScope
-```
-
-Create the PAT at
-<https://github.com/settings/tokens> with scope **`read:packages`**
-only.
-
-#### 4. Add `MWDAT` meta-data, permissions, and the deep-link intent-filter
-
-`android/app/src/main/AndroidManifest.xml`:
+2. Set `minSdk = 31` in `android/app/build.gradle.kts`.
+3. Add to `android/app/src/main/AndroidManifest.xml`:
 
 ```xml
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<uses-permission android:name="android.permission.BLUETOOTH" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+<uses-permission android:name="android.permission.INTERNET" />
 
-  <!-- Required by the Meta Wearables DAT SDK. -->
-  <uses-permission android:name="android.permission.BLUETOOTH" />
-  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-  <uses-permission android:name="android.permission.INTERNET" />
+<application ...>
+  <!-- "0" in Developer Mode; Developer Center values otherwise. -->
+  <meta-data
+      android:name="com.meta.wearable.mwdat.APPLICATION_ID"
+      android:value="0" />
+  <meta-data
+      android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
+      android:value="0" />
 
-  <application
-      android:name="${applicationName}"
-      android:label="Your App"
-      android:icon="@mipmap/ic_launcher">
-
-    <!-- Both values must be "0" in Developer Mode (per Meta's official
-         Android docs). An empty string causes TOKEN_NOT_CONFIGURED;
-         any non-"0" placeholder makes the SDK attempt a real HTTP
-         attestation against api2.ar.meta.com and registration fails
-         with HTTP 401. For production, replace with the AppID and
-         ClientToken from https://developers.meta.com/wearables/.
-         DAM_ENABLED tells the SDK you are running in Developer Access
-         Mode — without it `usesDam` stays false and the session manager
-         rejects every paired device with "No eligible device found".
-         ANALYTICS_OPT_OUT prevents the SDK from uploading developer
-         analytics during testing. -->
-    <meta-data
-        android:name="com.meta.wearable.mwdat.APPLICATION_ID"
-        android:value="0" />
-    <meta-data
-        android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
-        android:value="0" />
-    <meta-data
-        android:name="com.meta.wearable.mwdat.DAM_ENABLED"
-        android:value="true" />
-    <meta-data
-        android:name="com.meta.wearable.mwdat.ANALYTICS_OPT_OUT"
-        android:value="true" />
-
-    <activity
-        android:name=".MainActivity"
-        android:exported="true"
-        android:launchMode="singleTop"
-        android:theme="@style/LaunchTheme"
-        android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-        android:hardwareAccelerated="true"
-        android:windowSoftInputMode="adjustResize">
-
-      <intent-filter>
-        <action android:name="android.intent.action.MAIN"/>
-        <category android:name="android.intent.category.LAUNCHER"/>
-      </intent-filter>
-
-      <!-- Registration callback from the Meta AI app. The scheme MUST
-           match AppLinkURLScheme on iOS and the scheme you pick for
-           your app. `launchMode="singleTop"` above is required so the
-           SDK can find and route the inbound intent. -->
-      <intent-filter>
-        <action android:name="android.intent.action.VIEW" />
-        <category android:name="android.intent.category.BROWSABLE" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <data android:scheme="mywearablesapp" />
-      </intent-filter>
-    </activity>
-  </application>
-</manifest>
+  <activity android:name=".MainActivity" android:launchMode="singleTop" ...>
+    <!-- Registration callback from the Meta AI app. -->
+    <intent-filter>
+      <action android:name="android.intent.action.VIEW" />
+      <category android:name="android.intent.category.BROWSABLE" />
+      <category android:name="android.intent.category.DEFAULT" />
+      <data android:scheme="myapp" />
+    </intent-filter>
+  </activity>
+</application>
 ```
 
-The plugin's manifest already merges in `FOREGROUND_SERVICE`,
-`FOREGROUND_SERVICE_CONNECTED_DEVICE`, `WAKE_LOCK`, and
-`POST_NOTIFICATIONS` plus the background-streaming `<service>` entry,
-so you don't have to declare them.
+Meta's Android SDK now resolves from Maven Central. You do not need a GitHub
+token, a GitHub Packages repository, or `DAM_ENABLED`. The plugin merges the
+foreground-service permissions and the background-streaming service into
+your manifest.
 
-## Integration lifecycle
+## Quick start
 
 ```dart
+import 'package:flutter/widgets.dart';
 import 'package:meta_wearables_dat_flutter/meta_wearables_dat_flutter.dart';
 
-// 1. Permissions (Bluetooth/Internet on Android, no-op on iOS).
-await MetaWearablesDat.requestAndroidPermissions();
+Future<int?> startCamera() async {
+  // Android: BLUETOOTH_CONNECT and SDK initialisation. iOS: returns true.
+  await MetaWearablesDat.requestAndroidPermissions();
 
-// 2. Register with the Meta AI app via deep link. `appId` and
-//    `urlScheme` are read from the host app's Info.plist / Android
-//    meta-data — no need to repeat them in Dart.
-await MetaWearablesDat.startRegistration();
+  // Register once. The Meta AI app opens and calls back into your app.
+  if (await MetaWearablesDat.getRegistrationState() !=
+      RegistrationState.registered) {
+    await MetaWearablesDat.startRegistration();
+    await MetaWearablesDat.registrationStateStream()
+        .firstWhere((s) => s == RegistrationState.registered);
+  }
 
-// 3. Camera permission (Meta AI bottom sheet).
-await MetaWearablesDat.requestCameraPermission();
+  // Camera permission is granted in the Meta AI app.
+  final status = await MetaWearablesDat.requestPermission(Permission.camera);
+  if (!status.isGranted) return null;
 
-// 4. Start streaming and render the texture.
-final textureId = await MetaWearablesDat.startStreamSession();
-// Texture(textureId: textureId)
+  // Returns a texture id for Texture(textureId: ...).
+  return MetaWearablesDat.startStreamSession(
+    config: const StreamSessionConfig(
+      quality: StreamQuality.high, // 720 x 1280
+      frameRate: StreamFrameRate.fps24,
+      videoCodec: VideoCodec.raw,
+    ),
+  );
+}
 
-// 5. Capture stills, observe state.
-final photo = await MetaWearablesDat.capturePhoto();
-MetaWearablesDat.streamSessionStateStream().listen(print);
+Widget preview(int textureId) => AspectRatio(
+  aspectRatio: 9 / 16,
+  child: Texture(textureId: textureId),
+);
 ```
 
-See [`samples/camera_access/`](samples/camera_access/) for a complete
-integration that mirrors Meta's official iOS and Android CameraAccess
-samples, and [`samples/display_access/`](samples/display_access/) for
-the Display Access "Car Maintenance" tutorial on Ray-Ban Display
-glasses.
+Watch devices and their state:
 
-## Developer Terms
+```dart
+MetaWearablesDat.devicesStream().listen((devices) {
+  for (final d in devices) {
+    debugPrint('${d.name}: ${d.linkState.name}, battery ${d.batteryLevel}, '
+        '${d.donState.name}, thermal ${d.thermalLevel.name}');
+  }
+});
 
-- By using the Wearables Device Access Toolkit, you agree to Meta's
-  [Meta Wearables Developer Terms](https://wearables.developer.meta.com/terms),
-  including the [Acceptable Use Policy](https://wearables.developer.meta.com/acceptable-use-policy).
-- By enabling Meta integrations through this plugin, Meta may collect
-  information about how users' Meta devices communicate with your app.
-  Meta uses this information in accordance with the
-  [Meta Privacy Policy](https://www.meta.com/legal/privacy-policy/).
-- You may limit Meta's access to data from users' devices by opting
-  out of analytics as described below.
-
-### Opting out of data collection
-
-This plugin is a thin bridge — analytics are controlled by Meta's
-underlying SDKs and you opt out exactly as you would in a native
-project.
-
-**iOS** — add an `Analytics.OptOut` key inside the `MWDAT` dict in
-`ios/Runner/Info.plist`:
-
-```xml
-<key>MWDAT</key>
-<dict>
-  <key>Analytics</key>
-  <dict>
-    <key>OptOut</key>
-    <true/>
-  </dict>
-  <!-- other MWDAT keys ... -->
-</dict>
+// One device; emits the current snapshot first, then changes.
+MetaWearablesDat.deviceStateStream(uuid).listen((device) { /* ... */ });
 ```
 
-**Android** — add the matching `meta-data` entry inside
-`android/app/src/main/AndroidManifest.xml`:
+Accept registrations started from the Meta AI app:
 
-```xml
-<meta-data
-  android:name="com.meta.wearable.mwdat.ANALYTICS_OPT_OUT"
-  android:value="true" />
+```dart
+MetaWearablesDat.registrationRequestStream().listen((request) {
+  request.continueRegistration(); // or request.cancel(); expires after 5 min
+});
 ```
 
-Default behavior: if the key is missing or `false`, analytics are
-enabled. Set it to `true` to disable data collection.
+Capture a photo and stop:
 
-## AI-Assisted Development
+```dart
+final photo = await MetaWearablesDat.capturePhoto(format: PhotoFormat.jpeg);
+// photo.bytes, photo.format (the actual encoding)
 
-This repository ships config for three AI coding assistants, all
-generated from the same canonical knowledge in [`AGENTS.md`](AGENTS.md):
-
-| Tool | Config | How it loads |
-|------|--------|--------------|
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `.claude/skills/*.md` | Auto-discovered when you open the project |
-| [GitHub Copilot](https://github.com/features/copilot) | `.github/copilot-instructions.md` | Auto-loaded by Copilot in VS Code |
-| [Cursor](https://cursor.sh/) | `.cursor/rules/*.mdc` | Auto-loaded with glob-based triggers |
-
-### Quick setup
-
-Install config for your preferred tool:
-
-```bash
-./install-skills.sh claude    # Claude Code only
-./install-skills.sh copilot   # GitHub Copilot only
-./install-skills.sh cursor    # Cursor only
-./install-skills.sh agents    # AGENTS.md only
-./install-skills.sh all       # All tools
+await MetaWearablesDat.stopStreamSession(); // also releases the texture
 ```
 
-Or install everything remotely with a single command:
+More: [`doc/streaming.md`](doc/streaming.md),
+[`doc/frame_processing.md`](doc/frame_processing.md),
+[`doc/device_state.md`](doc/device_state.md).
 
-```bash
-curl -sL https://raw.githubusercontent.com/iSee-Labs/meta-wearables-dat-flutter/main/install-skills.sh | bash
+## Display (Meta Ray-Ban Display)
+
+```dart
+await MetaWearablesDat.startDisplaySession();
+
+final warnings = await MetaWearablesDat.sendDisplayView(
+  FlexBox(
+    spacing: 12,
+    padding: 24,
+    children: [
+      const DisplayText('Hello from Flutter', style: DisplayTextStyle.heading),
+      const DisplayIcon(DisplayIconName.checkmark),
+      DisplayButtonGroup(
+        buttons: [
+          DisplayButton(
+            label: 'Done',
+            onClick: MetaWearablesDat.stopDisplaySession,
+          ),
+        ],
+      ),
+    ],
+  ),
+);
+// warnings lists values the SDK substituted; they are not fatal.
+
+MetaWearablesDat.displayStateStream().listen((state) => debugPrint(state.name));
 ```
 
-If you cloned this repository, the config is already included — no
-setup needed.
+The canvas is 600 x 600. Every `sendDisplayView` replaces the whole view.
+The Back gesture on the glasses ends the display session. `VideoPlayer` plays
+HTTPS MP4 and must be the root view. Use `DisplayNode.validate()` to check a
+tree before sending it. Camera, display, and experimental capabilities share
+one device session. See [`doc/display_access.md`](doc/display_access.md).
 
-### What's included
+## Error handling
 
-- **Getting started** — pubspec wiring, `Info.plist`,
-  `AndroidManifest.xml`, Developer Mode.
-- **Camera streaming** — texture path, video codecs, photo capture,
-  `videoFramesStream`.
-- **Display access** — declarative on-glasses UI, callbacks, video.
-- **Mock device testing** — `MockDeviceKit` from Dart.
-- **Session lifecycle** — `DeviceSession` vs `StreamSession`,
-  pause/resume.
-- **Permissions & registration** — deep-link callbacks, camera permission flow.
-- **Debugging** — registration errors, no eligible device, Maven 401,
-  SPM not enabled.
-- **Sample app guide** — building a complete Flutter DAT app.
+Every failure is a subclass of the sealed `DatError`. Each error has a
+`category` (for example `STREAM_ERROR`), a `code` (the case name, for example
+`hingesClosed`), a typed `reason` on the concrete subclasses, a `message`, and
+a `recoveryAction`.
 
-For Meta's full API reference, point your AI tool at the
-[llms.txt endpoint](https://wearables.developer.meta.com/llms.txt?full=true).
+```dart
+try {
+  await MetaWearablesDat.startStreamSession();
+} on DatError catch (error) {
+  final text = switch (error) {
+    DeviceSessionError(reason: DeviceSessionErrorCase.noEligibleDevice) =>
+      'Connect and wear your glasses.',
+    StreamError(reason: StreamErrorCase.hingesClosed) => 'Open the glasses.',
+    StreamError(reason: StreamErrorCase.thermalHot) => 'The glasses are hot.',
+    PermissionError() => 'Allow camera access in the Meta AI app.',
+    _ => '${error.category}/${error.code}: ${error.message}',
+  };
+  debugPrint(text);
 
-## License
+  switch (error.recoveryAction) {
+    case DatRecoveryAction.openFirmwareUpdate:
+      await MetaWearablesDat.openFirmwareUpdate();
+    case DatRecoveryAction.openDatGlassesAppUpdate:
+      await MetaWearablesDat.openDatGlassesAppUpdate();
+    default:
+      break;
+  }
+}
+```
 
-[MIT](LICENSE) © 2026 iSee Labs.
+Asynchronous errors arrive on `registrationErrorStream()`,
+`deviceSessionErrorStream()`, `streamErrorStream()`, and
+`displayErrorStream()`.
 
-## Acknowledgments
+## Diagnostics
 
-Built on top of Meta's official open-source SDKs:
+```dart
+final diagnostics = await MetaWearablesDat.dumpDiagnostics();
+debugPrint('${diagnostics.platform} plugin ${diagnostics.pluginVersion}, '
+    'DAT ${diagnostics.sdkVersion}');
+for (final finding in diagnostics.findings) {
+  debugPrint('$finding\n  fix: ${finding.fix}');
+}
+```
 
-- [`meta-wearables-dat-ios`](https://github.com/facebook/meta-wearables-dat-ios)
-- [`meta-wearables-dat-android`](https://github.com/facebook/meta-wearables-dat-android)
+`findings` lists configuration problems with a stable `id`, a `severity`, and
+a `fix`. Examples: `appLinkUrlSchemeSuffix` (scheme does not end with `://`),
+`appLinkUrlSchemeNotRegistered`, `externalAccessoryProtocol`,
+`backgroundMode.external-accessory`, `damEnabledIgnored`, and
+`developerModeCredentials` (informational). `diagnostics.errors` returns only
+the blocking ones. `resources` counts native textures, listeners, and
+sessions; `diagnostics.isIdle` is `true` when everything is released.
 
-Architecture inspiration (texture bridge, per-frame stream) drawn from
-the community
-[`flutter_meta_wearables_dat`](https://github.com/rodcone/flutter_meta_wearables_dat)
-plugin. See [`NOTICE`](NOTICE) for full attribution.
+## Experimental APIs
+
+Meta marks some DAT 1.0 modules as experimental. The plugin exposes them with
+`@experimental` and excludes them from semantic versioning.
+
+> **Warning:** apps that use experimental APIs can be built and tested in
+> Developer Mode and Beta release channels, but **cannot ship to production
+> release channels**.
+
+| Capability | API |
+|---|---|
+| Inputs (touchpad, buttons, Meta Neural Band) | `startInputs`, `inputEventsStream`, `stopInputs` |
+| Motion (head motion samples) | `startMotion(samplingRate:)`, `motionSamplesStream`, `stopMotion` |
+| Speech (on-device transcription) | `startSpeech`, `transcriptionStream`, `stopSpeech` |
+| Voice invocations ("Hey Meta") | `startVoiceInvocations`, `voiceInvocationsStream`, `stopVoiceInvocations` |
+| High-resolution photo | `captureHighResPhoto(resolution:, quality:)`, `photoTransferProgressStream` |
+| In-stream audio | `StreamSessionConfig(audio: AudioStreamConfig())`, `audioFramesStream` |
+
+```dart
+await MetaWearablesDat.startInputs();
+MetaWearablesDat.inputEventsStream().listen((event) {
+  if (event is NavInputEvent) debugPrint('nav ${event.direction.name}');
+});
+```
+
+The main library exports the experimental types too.
+`package:meta_wearables_dat_flutter/experimental.dart` exports only the
+experimental types, so you can use it as a marker for experimental usage
+(the analyzer reports it as unnecessary next to the main import).
+
+On Android you can drop the experimental AARs with this line in your app's
+`android/gradle.properties`:
+
+```properties
+mwdat.experimental=false
+```
+
+Experimental calls then throw a `DatPluginError` with category
+`EXPERIMENTAL_NOT_LINKED` (`isExperimentalNotLinked` is `true`). iOS always
+links the experimental modules. See [`doc/experimental.md`](doc/experimental.md).
+
+## Testing with the Mock Device Kit
+
+```dart
+await MetaWearablesDat.enableMockDevice();
+final glasses =
+    await MetaWearablesDat.pairMockGlasses(MockGlassesModel.rayBanMeta);
+
+// A mock device appears in devicesStream() after power on and unfold.
+await MetaWearablesDat.mockPowerOn(glasses.uuid);
+await MetaWearablesDat.mockUnfold(glasses.uuid);
+await MetaWearablesDat.mockDon(glasses.uuid);
+
+await MetaWearablesDat.setMockCameraFeed(glasses.uuid, h265VideoPath);
+await MetaWearablesDat.setMockPermission(
+  Permission.camera,
+  PermissionStatus.granted,
+);
+
+final textureId =
+    await MetaWearablesDat.startStreamSession(deviceUUID: glasses.uuid);
+// ...
+await MetaWearablesDat.stopStreamSession();
+await MetaWearablesDat.disableMockDevice();
+```
+
+You can also simulate battery, charging, thermal level, touchpad taps, and
+capture failures, and preview the display with `startMockTestServer()`. Up to
+three mock devices can be paired. Disable the Mock Device Kit before you ship.
+See [`doc/mock_device.md`](doc/mock_device.md).
+
+## Known issues
+
+- **Enumerating all Objective-C classes crashes on iOS 18 (Meta SDK
+  issue).** `MWDATCore` 1.0.0 weakly links types that exist only on iOS 26
+  (from the `Network` and `WiFiAware` frameworks). Any call to
+  `objc_copyClassList` on iOS 17.2 to 18.x forces those classes to
+  initialize and aborts the app with "Failed to look up symbolic reference".
+  Normal plugin use is unaffected; the integration tests pass on iOS 18.
+  Confirmed on iOS 18.0 and 18.5 simulators, not on iOS 26.5 or 27.
+  Before shipping to iOS 18 users, check that no SDK in your app
+  enumerates every class (some analytics, crash-reporting and
+  dependency-injection libraries do), and run XCTest bundles on an iOS 26+
+  simulator.
+- **Raw frames pause in the iOS background.** Use `VideoCodec.hvc1` and
+  `enableBackgroundStreaming()` to keep streaming.
+- **`sendMockDisplayClick`** returns `true`, but Meta has not documented the
+  identifier format, so it may not fire `onClick`.
+- **Xcode build after `flutter pub get`** can fail with "requires minimum
+  platform version 17.2 ... but this target supports 15.0". Set the app's iOS
+  deployment target to 17.2 and run `flutter build ios --config-only` once.
+
+More in [`doc/troubleshooting.md`](doc/troubleshooting.md).
+
+## Samples
+
+| Sample | Shows |
+|---|---|
+| [`samples/camera_access`](samples/camera_access) | Flutter port of Meta's Camera Access sample: registration, streaming, photo and frame capture, Mock Device Kit menu. |
+| [`samples/display_access`](samples/display_access) | Flutter port of Meta's Display Access sample: tutorial screens on Ray-Ban Display with button groups and video. |
+| [`samples/glasses_companion`](samples/glasses_companion) | DAT 1.0 features in one app: live device state, update deep links, diagnostics findings, hvc1 preview, high-res photo, a display card, mock controls and the experimental modules. |
+
+## Documentation
+
+| Guide | Topic |
+|---|---|
+| [`getting_started.md`](doc/getting_started.md) | Install, Info.plist, manifest, Developer Mode |
+| [`registration_flow.md`](doc/registration_flow.md) | Registration, callback URLs, Meta-AI-initiated requests |
+| [`streaming.md`](doc/streaming.md) | Texture preview, codecs, photos, background streaming |
+| [`frame_processing.md`](doc/frame_processing.md) | `videoFramesStream`, pixel formats, costs |
+| [`display_access.md`](doc/display_access.md) | Display DSL and callbacks |
+| [`device_state.md`](doc/device_state.md) | Battery, wear, hinge, thermal, compatibility |
+| [`mock_device.md`](doc/mock_device.md) | Mock Device Kit |
+| [`experimental.md`](doc/experimental.md) | Inputs, Motion, Speech, voice invocations |
+| [`troubleshooting.md`](doc/troubleshooting.md) | Common problems |
+| [`production_checklist.md`](doc/production_checklist.md) | Before you distribute |
+| [`release_checklist.md`](doc/release_checklist.md) | Releasing this plugin |
+| [`migration_0.7_to_1.0.md`](doc/migration_0.7_to_1.0.md) | Upgrading from 0.7.x |
+
+Meta's documentation: <https://wearables.developer.meta.com/docs/develop/>.
+Changes: [`CHANGELOG.md`](CHANGELOG.md).
+
+## Compatibility
+
+The plugin's major.minor version tracks Meta's DAT version. The patch number
+is the plugin's own.
+
+| Plugin | Meta DAT (iOS and Android) |
+|---|---|
+| 1.0.x | 1.0.0 |
+| 0.7.x | 0.7.0 |
+
+Upgrading from 0.7.x: [`doc/migration_0.7_to_1.0.md`](doc/migration_0.7_to_1.0.md).
+
+## Developer terms and data collection
+
+By using the Wearables Device Access Toolkit you agree to the
+[Meta Wearables Developer Terms](https://wearables.developer.meta.com/terms)
+and the [Acceptable Use Policy](https://wearables.developer.meta.com/acceptable-use-policy).
+Meta may collect information about how users' devices communicate with your
+app. To opt out of analytics, add `Analytics > OptOut = true` inside the
+`MWDAT` dict on iOS, and
+`<meta-data android:name="com.meta.wearable.mwdat.ANALYTICS_OPT_OUT" android:value="true" />`
+on Android.
+
+## License and maintainer
+
+[MIT](LICENSE). Copyright 2026 iSee Labs. Maintained by Talha Ordukaya.
+Issues: <https://github.com/iSee-Labs/meta-wearables-dat-flutter/issues>.
+
+Meta's SDKs ([iOS](https://github.com/facebook/meta-wearables-dat-ios),
+[Android](https://github.com/facebook/meta-wearables-dat-android)) are linked
+as dependencies, not redistributed, and remain under Meta's license terms.
+See [`NOTICE`](NOTICE).
+
+"Meta", "Ray-Ban Meta", "Oakley Meta", and "Ray-Ban Display" are trademarks
+of Meta Platforms, Inc. and/or its affiliates. This project is not affiliated
+with Meta.

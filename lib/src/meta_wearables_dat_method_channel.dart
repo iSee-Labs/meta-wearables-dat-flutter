@@ -1,8 +1,9 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:meta_wearables_dat_flutter/src/channels.dart';
+import 'package:meta_wearables_dat_flutter/src/error_mapping.dart';
 import 'package:meta_wearables_dat_flutter/src/meta_wearables_dat_platform_interface.dart';
 import 'package:meta_wearables_dat_flutter/src/models/background_notification.dart';
 import 'package:meta_wearables_dat_flutter/src/models/camera_facing.dart';
@@ -10,865 +11,617 @@ import 'package:meta_wearables_dat_flutter/src/models/dat_error.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_compatibility.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_info.dart';
 import 'package:meta_wearables_dat_flutter/src/models/device_session_state.dart';
+import 'package:meta_wearables_dat_flutter/src/models/diagnostics.dart';
 import 'package:meta_wearables_dat_flutter/src/models/display/display_components.dart';
 import 'package:meta_wearables_dat_flutter/src/models/display/display_state.dart';
-import 'package:meta_wearables_dat_flutter/src/models/frame_data.dart';
+import 'package:meta_wearables_dat_flutter/src/models/experimental/inputs.dart';
+import 'package:meta_wearables_dat_flutter/src/models/experimental/motion.dart';
+import 'package:meta_wearables_dat_flutter/src/models/experimental/speech.dart';
+import 'package:meta_wearables_dat_flutter/src/models/experimental/voice.dart';
+import 'package:meta_wearables_dat_flutter/src/models/high_res_photo.dart';
+import 'package:meta_wearables_dat_flutter/src/models/mock.dart';
+import 'package:meta_wearables_dat_flutter/src/models/permission.dart';
 import 'package:meta_wearables_dat_flutter/src/models/photo_result.dart';
 import 'package:meta_wearables_dat_flutter/src/models/registration_state.dart';
-import 'package:meta_wearables_dat_flutter/src/models/stream_quality.dart';
+import 'package:meta_wearables_dat_flutter/src/models/stream_config.dart';
 import 'package:meta_wearables_dat_flutter/src/models/stream_session_state.dart';
 import 'package:meta_wearables_dat_flutter/src/models/video_frame.dart';
 import 'package:meta_wearables_dat_flutter/src/models/video_stream_size.dart';
 
-/// Default [MetaWearablesDatPlatform] implementation that forwards every call
-/// across a single `MethodChannel` plus the topic-specific `EventChannel`s
-/// described in `AGENTS.md`.
+/// [MetaWearablesDatPlatform] implemented over platform channels.
 class MethodChannelMetaWearablesDat extends MetaWearablesDatPlatform {
-  /// Method channel used for request/response calls.
+  /// The method channel.
   @visibleForTesting
-  final MethodChannel methodChannel = const MethodChannel(
-    'meta_wearables_dat_flutter',
+  final MethodChannel methodChannel = const MethodChannel(DatChannels.method);
+
+  final Map<String, Stream<Object?>> _streams = {};
+
+  /// The broadcast stream of event channel [name]. Each channel has one
+  /// native subscription, shared by every Dart listener; the native side
+  /// stops producing when the last listener cancels.
+  @visibleForTesting
+  Stream<Object?> events(String name) => _streams.putIfAbsent(
+    name,
+    () => EventChannel('${DatChannels.eventPrefix}$name')
+        .receiveBroadcastStream()
+        .handleError((Object error) {
+          if (error is PlatformException) {
+            throw DatErrorMapper.fromPlatformException(error);
+          }
+          // ignore: only_throw_errors
+          throw error;
+        }),
   );
 
-  /// Event channel for `registrationStateStream`.
-  @visibleForTesting
-  final EventChannel registrationStateChannel = const EventChannel(
-    'meta_wearables_dat_flutter/registration_state',
-  );
-
-  /// Event channel for `activeDeviceStream`.
-  @visibleForTesting
-  final EventChannel activeDeviceChannel = const EventChannel(
-    'meta_wearables_dat_flutter/active_device',
-  );
-
-  /// Event channel for `devicesStream`.
-  @visibleForTesting
-  final EventChannel devicesChannel = const EventChannel(
-    'meta_wearables_dat_flutter/devices',
-  );
-
-  /// Event channel for `compatibilityStream`.
-  @visibleForTesting
-  final EventChannel compatibilityChannel = const EventChannel(
-    'meta_wearables_dat_flutter/compatibility',
-  );
-
-  /// Event channel for `streamSessionStateStream`.
-  @visibleForTesting
-  final EventChannel streamSessionStateChannel = const EventChannel(
-    'meta_wearables_dat_flutter/stream_session_state',
-  );
-
-  /// Event channel for `streamSessionErrorStream`.
-  @visibleForTesting
-  final EventChannel streamSessionErrorsChannel = const EventChannel(
-    'meta_wearables_dat_flutter/stream_session_errors',
-  );
-
-  /// Event channel for `deviceSessionStateStream`.
-  @visibleForTesting
-  final EventChannel deviceSessionStateChannel = const EventChannel(
-    'meta_wearables_dat_flutter/device_session_state',
-  );
-
-  /// Event channel for `deviceSessionErrorStream`.
-  @visibleForTesting
-  final EventChannel deviceSessionErrorsChannel = const EventChannel(
-    'meta_wearables_dat_flutter/device_session_errors',
-  );
-
-  /// Event channel for `videoStreamSizeStream`.
-  @visibleForTesting
-  final EventChannel videoStreamSizeChannel = const EventChannel(
-    'meta_wearables_dat_flutter/video_stream_size',
-  );
-
-  /// Event channel for `videoFramesStream`.
-  @visibleForTesting
-  final EventChannel videoFramesChannel = const EventChannel(
-    'meta_wearables_dat_flutter/video_frames',
-  );
-
-  /// Event channel for `mockDevicesStream`.
-  @visibleForTesting
-  final EventChannel mockDevicesChannel = const EventChannel(
-    'meta_wearables_dat_flutter/mock_devices',
-  );
-
-  /// Event channel for `displayStateStream`.
-  @visibleForTesting
-  final EventChannel displayStateChannel = const EventChannel(
-    'meta_wearables_dat_flutter/display_state',
-  );
-
-  /// Event channel carrying display tap / click / playback callbacks back to
-  /// Dart. Each event is `{callbackId, type, [event]}`.
-  @visibleForTesting
-  final EventChannel displayEventsChannel = const EventChannel(
-    'meta_wearables_dat_flutter/display_events',
-  );
-
-  // Cached broadcast streams so multiple Dart-side listeners share a single
-  // platform-channel subscription.
-  Stream<RegistrationState>? _registrationStateStream;
-  Stream<DeviceInfo?>? _activeDeviceStream;
-  Stream<List<DeviceInfo>>? _devicesStream;
-  Stream<DeviceCompatibilityEvent>? _compatibilityStream;
-  Stream<StreamSessionState>? _streamSessionStateStream;
-  Stream<Object>? _streamSessionErrorStream;
-  Stream<DeviceSessionState>? _deviceSessionStateStream;
-  Stream<Object>? _deviceSessionErrorStream;
-  Stream<VideoStreamSize>? _videoStreamSizeStream;
-  Stream<VideoFrame>? _videoFramesStream;
-  Stream<List<DeviceInfo>>? _mockDevicesStream;
-  Stream<DisplayState>? _displayStateStream;
-
-  /// Callback table for the view currently shown on the glasses display.
-  /// Rebuilt on every [sendDisplayView]; dispatched to from the
-  /// `display_events` channel.
-  DisplayCallbackTable? _displayCallbacks;
-
-  /// Long-lived subscription to the `display_events` channel. Lives for the
-  /// lifetime of the plugin singleton (like the cached broadcast streams
-  /// above), so it is intentionally never cancelled.
+  /// Shared display callback table; replaced on every `sendDisplayView`.
+  DisplayCallbackTable _displayCallbacks = DisplayCallbackTable();
+  // Long-lived: dispatches every display callback for the plugin's lifetime.
   // ignore: cancel_subscriptions
-  StreamSubscription<dynamic>? _displayEventsSubscription;
+  StreamSubscription<Object?>? _displayEventsSubscription;
+  final StreamController<String> _displayWarnings =
+      StreamController<String>.broadcast();
 
-  /// Latest [VideoStreamSize] observed on the `video_stream_size` channel.
-  VideoStreamSize? _lastVideoStreamSize;
-
-  // --- Diagnostics ----------------------------------------------------------
-
-  @override
-  Future<String?> getPlatformVersion() {
-    return methodChannel.invokeMethod<String>('getPlatformVersion');
-  }
-
-  @override
-  Future<Map<String, Object?>> dumpDiagnostics() async {
-    final raw = await methodChannel
-        .invokeMethod<Map<Object?, Object?>>('dumpDiagnostics');
-    return _deepStringKeyed(raw) ?? <String, Object?>{};
-  }
-
-  Map<String, Object?>? _deepStringKeyed(Object? value) {
-    if (value is Map) {
-      final result = <String, Object?>{};
-      value.forEach((k, v) {
-        result['$k'] = _deepConvert(v);
-      });
-      return result;
+  Future<T?> _invoke<T>(
+    String method, [
+    Map<String, Object?>? arguments,
+  ]) async {
+    try {
+      return await methodChannel.invokeMethod<T>(method, arguments);
+    } on PlatformException catch (e) {
+      throw DatErrorMapper.fromPlatformException(e);
     }
-    return null;
   }
 
-  Object? _deepConvert(Object? value) {
-    if (value is Map) {
-      return _deepStringKeyed(value);
-    }
-    if (value is List) {
-      return value.map(_deepConvert).toList(growable: false);
+  Future<T> _require<T>(
+    String method, [
+    Map<String, Object?>? arguments,
+  ]) async {
+    final value = await _invoke<T>(method, arguments);
+    if (value == null) {
+      throw DatPluginError(
+        code: 'nullResult',
+        message: '$method returned no value.',
+      );
     }
     return value;
   }
 
-  // --- Permissions ----------------------------------------------------------
+  static Map<Object?, Object?> _map(Object? value) =>
+      value as Map<Object?, Object?>? ?? const {};
 
-  @override
-  Future<bool> requestAndroidPermissions() async {
-    final granted = await methodChannel.invokeMethod<bool>(
-      'requestAndroidPermissions',
-    );
-    return granted ?? false;
-  }
-
-  @override
-  Future<bool> requestCameraPermission() async {
-    try {
-      final granted = await methodChannel.invokeMethod<bool>(
-        'requestCameraPermission',
-      );
-      return granted ?? false;
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  @override
-  Future<bool> getCameraPermissionStatus() async {
-    try {
-      final granted = await methodChannel.invokeMethod<bool>(
-        'getCameraPermissionStatus',
-      );
-      return granted ?? false;
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  // --- Registration ---------------------------------------------------------
-
-  @override
-  Future<void> startRegistration({String? appId, String? urlScheme}) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        'startRegistration',
-        <String, Object?>{
-          if (appId != null) 'appId': appId,
-          if (urlScheme != null) 'urlScheme': urlScheme,
-        },
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  @override
-  Future<bool> handleUrl(String url) async {
-    try {
-      final consumed = await methodChannel.invokeMethod<bool>(
-        'handleUrl',
-        <String, Object?>{'url': url},
-      );
-      return consumed ?? false;
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  @override
-  Future<void> startUnregistration() async {
-    try {
-      await methodChannel.invokeMethod<void>('startUnregistration');
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  @override
-  Future<RegistrationState> getRegistrationState() async {
-    final raw = await methodChannel.invokeMethod<int>('getRegistrationState');
-    return RegistrationState.fromInt(raw);
-  }
-
-  // --- Registration streams -------------------------------------------------
-
-  @override
-  Stream<RegistrationState> registrationStateStream() {
-    return _registrationStateStream ??= registrationStateChannel
-        .receiveBroadcastStream()
-        .map((event) => RegistrationState.fromInt(event as int?));
-  }
-
-  @override
-  Stream<DeviceInfo?> activeDeviceStream() {
-    return _activeDeviceStream ??=
-        activeDeviceChannel.receiveBroadcastStream().map((event) {
-      if (event == null) return null;
-      return DeviceInfo.fromMap(event as Map<Object?, Object?>);
-    });
-  }
-
-  @override
-  Stream<List<DeviceInfo>> devicesStream() {
-    return _devicesStream ??= devicesChannel.receiveBroadcastStream().map((
-      event,
-    ) {
-      final list = (event as List<Object?>?) ?? const [];
-      return list
-          .map((e) => DeviceInfo.fromMap(e! as Map<Object?, Object?>))
+  static List<DeviceInfo> _devices(Object? value) =>
+      (value as List<Object?>? ?? const [])
+          .whereType<Map<Object?, Object?>>()
+          .map(DeviceInfo.fromMap)
           .toList(growable: false);
+
+  Stream<T> _errors<T extends DatError>(String channel, String category) =>
+      events(channel)
+          .map(
+            (event) =>
+                DatErrorMapper.fromEvent(event, defaultCategory: category),
+          )
+          .where((error) => error is T)
+          .cast<T>();
+
+  // --- Platform & diagnostics ---------------------------------------------------
+
+  @override
+  Future<String?> getPlatformVersion() => _invoke<String>('getPlatformVersion');
+
+  @override
+  Future<DatDiagnostics> dumpDiagnostics() async => DatDiagnostics.fromMap(
+    _map(await _invoke<Map<Object?, Object?>>('dumpDiagnostics')),
+  );
+
+  @override
+  Future<bool> requestAndroidPermissions() async =>
+      await _invoke<bool>('requestAndroidPermissions') ?? false;
+
+  // --- Registration ---------------------------------------------------------------
+
+  @override
+  Future<void> startRegistration() => _invoke<void>('startRegistration');
+
+  @override
+  Future<void> startUnregistration() => _invoke<void>('startUnregistration');
+
+  @override
+  Future<bool> handleUrl(String url) async =>
+      await _invoke<bool>('handleUrl', {'url': url}) ?? false;
+
+  @override
+  Future<RegistrationState> getRegistrationState() async =>
+      RegistrationState.fromWire(await _invoke<String>('getRegistrationState'));
+
+  @override
+  Stream<RegistrationState> registrationStateStream() =>
+      events(DatChannels.registrationState).map(RegistrationState.fromWire);
+
+  @override
+  Stream<DatError> registrationErrorStream() => _errors<DatError>(
+    DatChannels.registrationErrors,
+    DatErrorCodes.registration,
+  );
+
+  @override
+  Stream<RegistrationRequest> registrationRequestStream() => events(
+    DatChannels.registrationRequests,
+  ).map((e) => RegistrationRequest.fromMap(_map(e)));
+
+  @override
+  Future<void> answerRegistrationRequest(
+    String requestId, {
+    required bool accept,
+  }) => _invoke<void>(
+    accept ? 'continueRegistrationRequest' : 'cancelRegistrationRequest',
+    {'requestId': requestId},
+  );
+
+  // --- Permissions & navigation -------------------------------------------------
+
+  @override
+  Future<PermissionStatus> requestPermission(Permission permission) async =>
+      PermissionStatus.fromWire(
+        await _invoke<String>('requestPermission', {
+          'permission': permission.name,
+        }),
+      );
+
+  @override
+  Future<PermissionStatus> checkPermissionStatus(Permission permission) async =>
+      PermissionStatus.fromWire(
+        await _invoke<String>('checkPermissionStatus', {
+          'permission': permission.name,
+        }),
+      );
+
+  @override
+  Future<void> openFirmwareUpdate() => _invoke<void>('openFirmwareUpdate');
+
+  @override
+  Future<void> openDatGlassesAppUpdate() =>
+      _invoke<void>('openDatGlassesAppUpdate');
+
+  // --- Devices --------------------------------------------------------------------
+
+  @override
+  Future<List<DeviceInfo>> getDevices() async =>
+      _devices(await _invoke<List<Object?>>('getDevices'));
+
+  @override
+  Future<DeviceInfo?> getDevice(String deviceUuid) async {
+    final map = await _invoke<Map<Object?, Object?>>('getDevice', {
+      'deviceUuid': deviceUuid,
     });
+    return map == null ? null : DeviceInfo.fromMap(map);
   }
 
   @override
-  Future<List<DeviceInfo>> getDevices() async {
-    try {
-      final raw = await methodChannel.invokeMethod<List<Object?>>('getDevices');
-      if (raw == null) return const [];
-      return raw
-          .map((e) => DeviceInfo.fromMap(e! as Map<Object?, Object?>))
-          .toList(growable: false);
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
+  Future<DeviceInfo?> getSessionDevice() async {
+    final map = await _invoke<Map<Object?, Object?>>('getSessionDevice');
+    return map == null ? null : DeviceInfo.fromMap(map);
   }
 
   @override
-  Stream<DeviceCompatibilityEvent> compatibilityStream() {
-    return _compatibilityStream ??=
-        compatibilityChannel.receiveBroadcastStream().map(
-              (event) => DeviceCompatibilityEvent.fromMap(
-                event as Map<Object?, Object?>,
-              ),
-            );
-  }
-
-  // --- Streaming ------------------------------------------------------------
+  Stream<List<DeviceInfo>> devicesStream() =>
+      events(DatChannels.devices).map(_devices);
 
   @override
-  Future<int> startStreamSession({
-    String? deviceUUID,
-    int fps = 30,
-    StreamQuality quality = StreamQuality.medium,
-    Set<DeviceKind>? deviceKinds,
-    VideoCodec videoCodec = VideoCodec.raw,
+  Stream<DeviceInfo> deviceStateChanges() =>
+      events(DatChannels.deviceState).map((e) => DeviceInfo.fromMap(_map(e)));
+
+  @override
+  Stream<DeviceInfo?> activeDeviceStream() => events(
+    DatChannels.activeDevice,
+  ).map((e) => e == null ? null : DeviceInfo.fromMap(_map(e)));
+
+  @override
+  Stream<DeviceCompatibilityEvent> compatibilityStream() => events(
+    DatChannels.compatibility,
+  ).map((e) => DeviceCompatibilityEvent.fromMap(_map(e)));
+
+  @override
+  Stream<DeviceSessionState> deviceSessionStateStream() =>
+      events(DatChannels.deviceSessionState).map(DeviceSessionState.fromWire);
+
+  @override
+  Stream<DeviceSessionError> deviceSessionErrorStream() =>
+      _errors<DeviceSessionError>(
+        DatChannels.deviceSessionErrors,
+        DatErrorCodes.deviceSession,
+      );
+
+  // --- Camera ---------------------------------------------------------------------
+
+  @override
+  Future<int> startStreamSession(
+    StreamSessionConfig config, {
+    String? deviceUuid,
+  }) =>
+      _require<int>('startStreamSession', config.toMap(deviceUuid: deviceUuid));
+
+  @override
+  Future<void> stopStreamSession() => _invoke<void>('stopStreamSession');
+
+  @override
+  Stream<StreamSessionState> streamSessionStateStream() =>
+      events(DatChannels.streamSessionState).map(StreamSessionState.fromWire);
+
+  @override
+  Stream<StreamError> streamErrorStream() => _errors<StreamError>(
+    DatChannels.streamSessionErrors,
+    DatErrorCodes.stream,
+  );
+
+  @override
+  Stream<CameraState> cameraStateStream() =>
+      events(DatChannels.cameraState).map(CameraState.fromWire);
+
+  @override
+  Stream<VideoStreamSize> videoStreamSizeStream() =>
+      events(DatChannels.videoStreamSize)
+          .map((e) => VideoStreamSize.fromMap(_map(e)))
+          .distinct((a, b) => a.width == b.width && a.height == b.height);
+
+  @override
+  Stream<VideoFrame> videoFramesStream() =>
+      events(DatChannels.videoFrames).map((e) => VideoFrame.fromMap(_map(e)));
+
+  @override
+  Stream<AudioFrame> audioFramesStream() =>
+      events(DatChannels.audioFrames).map((e) => AudioFrame.fromMap(_map(e)));
+
+  @override
+  Future<PhotoResult> capturePhoto({
+    PhotoFormat format = PhotoFormat.jpeg,
   }) async {
-    try {
-      final id = await methodChannel.invokeMethod<int>(
-        'startStreamSession',
-        <String, Object?>{
-          if (deviceUUID != null) 'deviceUuid': deviceUUID,
-          'fps': fps,
-          'quality': quality.name,
-          if (deviceKinds != null && deviceKinds.isNotEmpty)
-            'deviceKinds': deviceKinds.map((k) => k.wireName).toList(),
-          'videoCodec': videoCodec.name,
-        },
-      );
-      if (id == null) {
-        throw const SessionError(
-          code: DatErrorCodes.session,
-          message: 'startStreamSession returned null',
-        );
-      }
-      return id;
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  @override
-  Future<void> stopStreamSession({String? deviceUUID}) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        'stopStreamSession',
-        <String, Object?>{
-          if (deviceUUID != null) 'deviceUuid': deviceUUID,
-        },
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  @override
-  Future<void> pauseStreamSession({String? deviceUUID}) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        'pauseStreamSession',
-        <String, Object?>{
-          if (deviceUUID != null) 'deviceUuid': deviceUUID,
-        },
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  @override
-  Future<void> resumeStreamSession({String? deviceUUID}) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        'resumeStreamSession',
-        <String, Object?>{
-          if (deviceUUID != null) 'deviceUuid': deviceUUID,
-        },
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  // --- Streaming streams ----------------------------------------------------
-
-  @override
-  Stream<StreamSessionState> streamSessionStateStream() {
-    return _streamSessionStateStream ??= streamSessionStateChannel
-        .receiveBroadcastStream()
-        .map((event) => StreamSessionState.fromInt(event as int?));
-  }
-
-  @override
-  Stream<Object> streamSessionErrorStream() {
-    return _streamSessionErrorStream ??= streamSessionErrorsChannel
-        .receiveBroadcastStream()
-        .map(_mapStreamSessionError);
-  }
-
-  @override
-  Stream<DeviceSessionState> deviceSessionStateStream() {
-    return _deviceSessionStateStream ??= deviceSessionStateChannel
-        .receiveBroadcastStream()
-        .map((event) => DeviceSessionState.fromInt(event as int?));
-  }
-
-  @override
-  Stream<Object> deviceSessionErrorStream() {
-    return _deviceSessionErrorStream ??= deviceSessionErrorsChannel
-        .receiveBroadcastStream()
-        .map(_mapDeviceSessionError);
-  }
-
-  @override
-  Stream<VideoStreamSize> videoStreamSizeStream() {
-    return _videoStreamSizeStream ??= videoStreamSizeChannel
-        .receiveBroadcastStream()
-        .map((event) => VideoStreamSize.fromMap(event as Map<Object?, Object?>))
-        .map((size) {
-      _lastVideoStreamSize = size;
-      return size;
+    final map = await _require<Map<Object?, Object?>>('capturePhoto', {
+      'format': format.name,
     });
+    return PhotoResult(
+      bytes: map['bytes']! as Uint8List,
+      format: map['format'] == 'heic' ? PhotoFormat.heic : PhotoFormat.jpeg,
+    );
   }
 
   @override
-  Stream<VideoFrame> videoFramesStream() {
-    return _videoFramesStream ??= videoFramesChannel
-        .receiveBroadcastStream()
-        .map((event) => VideoFrame.fromMap(event as Map<Object?, Object?>));
-  }
+  Future<HighResPhoto> captureHighResPhoto({
+    required PhotoResolution resolution,
+    required PhotoQuality quality,
+  }) async => HighResPhoto.fromMap(
+    await _require<Map<Object?, Object?>>('capturePhotoHq', {
+      'resolution': resolution.name,
+      'quality': quality.name,
+    }),
+  );
+
+  @override
+  Stream<PhotoTransferProgress> photoTransferProgressStream() => events(
+    DatChannels.photoProgress,
+  ).map((e) => PhotoTransferProgress.fromMap(_map(e)));
+
+  @override
+  Stream<PhotoState> photoStateStream() =>
+      events(DatChannels.photoState).map(PhotoState.fromWire);
+
+  @override
+  Stream<PhotoError> photoErrorStream() =>
+      _errors<PhotoError>(DatChannels.photoErrors, DatErrorCodes.photo);
 
   @override
   Future<void> enableBackgroundStreaming({
     BackgroundNotification? androidNotification,
-  }) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        'enableBackgroundStreaming',
-        <String, Object?>{
-          if (androidNotification != null)
-            'androidNotification': androidNotification.toMap(),
-        },
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
+  }) => _invoke<void>('enableBackgroundStreaming', {
+    if (androidNotification != null)
+      'androidNotification': androidNotification.toMap(),
+  });
+
+  @override
+  Future<void> disableBackgroundStreaming() =>
+      _invoke<void>('disableBackgroundStreaming');
+
+  // --- Display --------------------------------------------------------------------
+
+  void _ensureDisplayEvents() {
+    _displayEventsSubscription ??= events(DatChannels.displayEvents).listen((
+      event,
+    ) {
+      final map = _map(event);
+      if (map['type'] == 'warning') {
+        _displayWarnings.add(map['message'] as String? ?? '');
+        return;
+      }
+      _displayCallbacks.dispatch(map);
+    }, onError: (Object _) {});
   }
 
   @override
-  Future<void> disableBackgroundStreaming() async {
-    try {
-      await methodChannel.invokeMethod<void>('disableBackgroundStreaming');
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  // --- Display --------------------------------------------------------------
-
-  @override
-  Future<void> startDisplaySession({String? deviceUUID}) async {
-    _ensureDisplayEventsListening();
-    try {
-      await methodChannel.invokeMethod<void>(
-        'startDisplaySession',
-        <String, Object?>{
-          if (deviceUUID != null) 'deviceUuid': deviceUUID,
-        },
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
+  Future<void> startDisplaySession({String? deviceUuid}) {
+    _ensureDisplayEvents();
+    return _invoke<void>('startDisplaySession', {
+      if (deviceUuid != null) 'deviceUuid': deviceUuid,
+    });
   }
 
   @override
-  Future<void> sendDisplayView(DisplayView view) async {
-    _ensureDisplayEventsListening();
+  Future<List<String>> sendDisplayView(DisplayView view) async {
+    final fatal = view.validate().where((issue) => issue.isFatal).toList();
+    if (fatal.isNotEmpty) {
+      throw DatArgumentError(message: fatal.map((i) => i.message).join(' '));
+    }
+    _ensureDisplayEvents();
     final table = DisplayCallbackTable();
     final json = view.toJson(table);
-    // Replace the live callback table so events for the previous view stop
-    // resolving once the new view is on screen.
     _displayCallbacks = table;
-    try {
-      await methodChannel.invokeMethod<void>(
-        'sendDisplayView',
-        <String, Object?>{'view': json},
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
+    final warnings = await _invoke<List<Object?>>('sendDisplayView', {
+      'view': json,
+    });
+    return (warnings ?? const []).whereType<String>().toList(growable: false);
   }
+
+  @override
+  Future<void> clearDisplay() => _invoke<void>('clearDisplay');
+
+  @override
+  Future<void> stopDisplayVideo() => _invoke<void>('stopDisplayVideo');
 
   @override
   Future<void> stopDisplaySession() async {
-    try {
-      await methodChannel.invokeMethod<void>('stopDisplaySession');
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-    _displayCallbacks = null;
+    await _invoke<void>('stopDisplaySession');
+    _displayCallbacks = DisplayCallbackTable();
   }
 
   @override
-  Stream<DisplayState> displayStateStream() {
-    return _displayStateStream ??= displayStateChannel
-        .receiveBroadcastStream()
-        .map((event) => DisplayState.fromInt(event as int?));
-  }
-
-  /// Lazily subscribes to the `display_events` channel and forwards every
-  /// event to the live [DisplayCallbackTable]. Idempotent.
-  void _ensureDisplayEventsListening() {
-    _displayEventsSubscription ??=
-        displayEventsChannel.receiveBroadcastStream().listen((event) {
-      if (event is Map) {
-        _displayCallbacks?.dispatch(event.cast<Object?, Object?>());
-      }
-    });
-  }
-
-  // --- Photo capture --------------------------------------------------------
+  Stream<DisplayState> displayStateStream() =>
+      events(DatChannels.displayState).map(DisplayState.fromWire);
 
   @override
-  Future<PhotoResult> capturePhoto({
-    String? deviceUUID,
-    PhotoFormat format = PhotoFormat.jpeg,
-  }) async {
-    try {
-      final result = await methodChannel.invokeMethod<Map<Object?, Object?>>(
-          'capturePhoto', <String, Object?>{
-        if (deviceUUID != null) 'deviceUuid': deviceUUID,
-        'format': format.name,
-      });
-      if (result == null) {
-        throw const CaptureError(
-          code: DatErrorCodes.capture,
-          message: 'capturePhoto returned null',
-        );
-      }
-      final bytes = result['bytes'];
-      final formatName = result['format'] as String? ?? format.name;
-      final byteList = switch (bytes) {
-        final Uint8List u => u,
-        final List<int> l => Uint8List.fromList(l),
-        _ => Uint8List(0),
-      };
-      return PhotoResult(
-        bytes: byteList,
-        format: formatName == 'heic' ? PhotoFormat.heic : PhotoFormat.jpeg,
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  // --- Frame capture --------------------------------------------------------
+  Stream<DisplayError> displayErrorStream() =>
+      _errors<DisplayError>(DatChannels.displayErrors, DatErrorCodes.display);
 
   @override
-  Future<FrameData?> captureStreamFrame(
-    int textureId, {
-    FrameFormat format = FrameFormat.rawRgba,
-  }) async {
-    final size =
-        _lastVideoStreamSize ?? const VideoStreamSize(width: 1280, height: 720);
-    final width = size.width;
-    final height = size.height;
-    if (width <= 0 || height <= 0) return null;
-
-    ui.Scene? scene;
-    ui.Image? image;
-    try {
-      final builder = ui.SceneBuilder()
-        ..pushOffset(0, 0)
-        ..addTexture(
-          textureId,
-          width: width.toDouble(),
-          height: height.toDouble(),
-        )
-        ..pop();
-      scene = builder.build();
-      image = await scene.toImage(width, height);
-
-      final byteFormat = switch (format) {
-        FrameFormat.png => ui.ImageByteFormat.png,
-        FrameFormat.rawStraightRgba => ui.ImageByteFormat.rawStraightRgba,
-        FrameFormat.rawRgba => ui.ImageByteFormat.rawRgba,
-      };
-      final byteData = await image.toByteData(format: byteFormat);
-      if (byteData == null) {
-        throw const CaptureError(
-          code: DatErrorCodes.capture,
-          message: 'ui.Image.toByteData returned null',
-        );
-      }
-      return FrameData(
-        bytes: byteData.buffer.asUint8List(
-          byteData.offsetInBytes,
-          byteData.lengthInBytes,
-        ),
-        width: width,
-        height: height,
-        format: format,
-      );
-    } catch (e) {
-      if (e is DatError) rethrow;
-      throw CaptureError(
-        code: DatErrorCodes.capture,
-        message: 'captureStreamFrame failed: $e',
-      );
-    } finally {
-      image?.dispose();
-      scene?.dispose();
-    }
+  Stream<String> displayWarningStream() {
+    _ensureDisplayEvents();
+    return _displayWarnings.stream;
   }
 
-  // --- Mock device control --------------------------------------------------
+  // --- Experimental capabilities ----------------------------------------------------
+
+  @override
+  Future<void> startInputs(
+    InputsConfiguration configuration, {
+    String? deviceUuid,
+  }) => _invoke<void>('startInputs', {
+    ...configuration.toMap(),
+    if (deviceUuid != null) 'deviceUuid': deviceUuid,
+  });
+
+  @override
+  Future<void> stopInputs() => _invoke<void>('stopInputs');
+
+  @override
+  Stream<InputEvent> inputEventsStream() =>
+      events(DatChannels.inputsEvents).map((e) => InputEvent.fromMap(_map(e)));
+
+  @override
+  Stream<InputsState> inputsStateStream() =>
+      events(DatChannels.inputsState).map(InputsState.fromWire);
+
+  @override
+  Stream<InputsError> inputsErrorStream() =>
+      _errors<InputsError>(DatChannels.inputsErrors, DatErrorCodes.inputs);
+
+  @override
+  Future<void> startMotion(
+    MotionSamplingRate samplingRate, {
+    String? deviceUuid,
+  }) => _invoke<void>('startMotion', {
+    'samplingRate': samplingRate.value,
+    if (deviceUuid != null) 'deviceUuid': deviceUuid,
+  });
+
+  @override
+  Future<void> stopMotion() => _invoke<void>('stopMotion');
+
+  @override
+  Stream<MotionSample> motionSamplesStream() => events(
+    DatChannels.motionSamples,
+  ).map((e) => MotionSample.fromMap(_map(e)));
+
+  @override
+  Stream<MotionState> motionStateStream() =>
+      events(DatChannels.motionState).map(MotionState.fromWire);
+
+  @override
+  Stream<MotionError> motionErrorStream() =>
+      _errors<MotionError>(DatChannels.motionErrors, DatErrorCodes.motion);
+
+  @override
+  Future<void> startSpeech({String? deviceUuid}) => _invoke<void>(
+    'startSpeech',
+    {if (deviceUuid != null) 'deviceUuid': deviceUuid},
+  );
+
+  @override
+  Future<void> stopSpeech() => _invoke<void>('stopSpeech');
+
+  @override
+  Stream<TranscriptionResult> transcriptionStream() => events(
+    DatChannels.speechTranscriptions,
+  ).map((e) => TranscriptionResult.fromMap(_map(e)));
+
+  @override
+  Stream<SpeechState> speechStateStream() =>
+      events(DatChannels.speechState).map(SpeechState.fromWire);
+
+  @override
+  Stream<SpeechError> speechErrorStream() =>
+      _errors<SpeechError>(DatChannels.speechErrors, DatErrorCodes.speech);
+
+  @override
+  Future<void> startVoiceInvocations({String? deviceUuid}) => _invoke<void>(
+    'startVoiceInvocations',
+    {if (deviceUuid != null) 'deviceUuid': deviceUuid},
+  );
+
+  @override
+  Future<void> stopVoiceInvocations() => _invoke<void>('stopVoiceInvocations');
+
+  @override
+  Stream<VoiceInvocation> voiceInvocationsStream() => events(
+    DatChannels.voiceInvocations,
+  ).map((e) => VoiceInvocation.fromMap(_map(e)));
+
+  @override
+  Stream<VoiceInvocationsState> voiceInvocationsStateStream() =>
+      events(DatChannels.voiceState).map(VoiceInvocationsState.fromWire);
+
+  @override
+  Stream<VoiceInvocationError> voiceInvocationErrorStream() =>
+      _errors<VoiceInvocationError>(
+        DatChannels.voiceErrors,
+        DatErrorCodes.voiceInvocation,
+      );
+
+  @override
+  Future<bool> respondVoiceInvocation(
+    String invocationId, {
+    required bool success,
+    String? actionOutput,
+  }) async =>
+      await _invoke<bool>('respondVoiceInvocation', {
+        'invocationId': invocationId,
+        'success': success,
+        if (actionOutput != null) 'actionOutput': actionOutput,
+      }) ??
+      false;
+
+  // --- Mock Device Kit ------------------------------------------------------------------
 
   @override
   Future<void> enableMockDevice({
-    bool initiallyRegistered = true,
-    bool initialPermissionsGranted = true,
-  }) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        'enableMockDevice',
-        <String, Object?>{
-          'initiallyRegistered': initiallyRegistered,
-          'initialPermissionsGranted': initialPermissionsGranted,
-        },
+    required bool initiallyRegistered,
+    required bool initialPermissionsGranted,
+  }) => _invoke<void>('enableMockDevice', {
+    'initiallyRegistered': initiallyRegistered,
+    'initialPermissionsGranted': initialPermissionsGranted,
+  });
+
+  @override
+  Future<void> disableMockDevice() => _invoke<void>('disableMockDevice');
+
+  @override
+  Future<bool> isMockDeviceEnabled() async =>
+      await _invoke<bool>('isMockDeviceEnabled') ?? false;
+
+  @override
+  Future<DeviceInfo> pairMockGlasses(MockGlassesModel model) async =>
+      DeviceInfo.fromMap(
+        await _require<Map<Object?, Object?>>('pairMockGlasses', {
+          'model': model.name,
+        }),
       );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
 
   @override
-  Future<void> disableMockDevice() async {
-    try {
-      await methodChannel.invokeMethod<void>('disableMockDevice');
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
+  Future<List<DeviceInfo>> pairedMockDevices() async =>
+      _devices(await _invoke<List<Object?>>('pairedMockDevices'));
 
   @override
-  Future<bool> isMockDeviceEnabled() async {
-    try {
-      final enabled = await methodChannel.invokeMethod<bool>(
-        'isMockDeviceEnabled',
-      );
-      return enabled ?? false;
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
+  Future<void> unpairMockDevice(String uuid) =>
+      _invoke<void>('unpairMockDevice', {'uuid': uuid});
 
   @override
-  Future<String> pairMockRayBanMeta() async {
-    try {
-      final uuid =
-          await methodChannel.invokeMethod<String>('pairMockRayBanMeta');
-      return uuid ?? '';
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
+  Stream<List<DeviceInfo>> mockDevicesStream() =>
+      events(DatChannels.mockDevices).map(_devices);
 
   @override
-  Future<List<DeviceInfo>> pairedMockDevices() async {
-    try {
-      final raw = await methodChannel.invokeMethod<List<Object?>>(
-        'pairedMockDevices',
-      );
-      if (raw == null) return const [];
-      return raw
-          .map((e) => DeviceInfo.fromMap(e! as Map<Object?, Object?>))
-          .toList(growable: false);
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
+  Future<void> mockAction(String method, String uuid) =>
+      _invoke<void>(method, {'uuid': uuid});
 
   @override
-  Future<void> unpairMockDevice(String uuid) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        'unpairMockDevice',
-        <String, Object?>{'uuid': uuid},
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
+  Future<void> setMockBatteryLevel(String uuid, int? level) =>
+      _invoke<void>('setMockBatteryLevel', {'uuid': uuid, 'level': level});
 
   @override
-  Future<void> mockPowerOn(String uuid) async {
-    await _mockUuidVoid('mockPowerOn', uuid);
-  }
+  Future<void> setMockChargingState(String uuid, ChargingState state) =>
+      _invoke<void>('setMockChargingState', {
+        'uuid': uuid,
+        'state': state.name,
+      });
 
   @override
-  Future<void> mockPowerOff(String uuid) async {
-    await _mockUuidVoid('mockPowerOff', uuid);
-  }
+  Future<void> setMockThermalLevel(String uuid, ThermalLevel level) =>
+      _invoke<void>('setMockThermalLevel', {'uuid': uuid, 'level': level.name});
 
   @override
-  Future<void> mockDon(String uuid) async {
-    await _mockUuidVoid('mockDon', uuid);
-  }
+  Future<void> setMockCameraFacing(String uuid, CameraFacing facing) =>
+      _invoke<void>('setMockCameraFacing', {
+        'uuid': uuid,
+        'facing': facing.value,
+      });
 
   @override
-  Future<void> mockDoff(String uuid) async {
-    await _mockUuidVoid('mockDoff', uuid);
-  }
+  Future<void> setMockFile(String method, String uuid, String filePath) =>
+      _invoke<void>(method, {'uuid': uuid, 'filePath': filePath});
 
   @override
-  Future<void> mockFold(String uuid) async {
-    await _mockUuidVoid('mockFold', uuid);
-  }
+  Future<void> simulateMockCaptureFailure(String uuid) =>
+      _invoke<void>('simulateMockCaptureFailure', {'uuid': uuid});
 
   @override
-  Future<void> mockUnfold(String uuid) async {
-    await _mockUuidVoid('mockUnfold', uuid);
-  }
-
-  Future<void> _mockUuidVoid(String method, String uuid) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        method,
-        <String, Object?>{'uuid': uuid},
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
+  Future<void> setMockPermission(
+    Permission permission,
+    PermissionStatus status, {
+    required bool requestResult,
+  }) => _invoke<void>(
+    requestResult ? 'setMockPermissionRequestResult' : 'setMockPermission',
+    {'permission': permission.name, 'status': status.name},
+  );
 
   @override
-  Future<void> setMockCameraFacing(String uuid, CameraFacing facing) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        'setMockCameraFacing',
-        <String, Object?>{'uuid': uuid, 'facing': facing.name},
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
+  Future<void> mockInput(String uuid, Map<String, Object?> args) =>
+      _invoke<void>('mockInput', {...args, 'uuid': uuid});
 
   @override
-  Future<void> setMockCameraFeed(String uuid, String? filePath) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        'setMockCameraFeed',
-        <String, Object?>{'uuid': uuid, 'filePath': filePath},
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
+  Future<void> mockSpeech(String uuid, Map<String, Object?> args) =>
+      _invoke<void>('mockSpeech', {...args, 'uuid': uuid});
 
   @override
-  Future<void> setMockCapturedImage(String uuid, String? filePath) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        'setMockCapturedImage',
-        <String, Object?>{'uuid': uuid, 'filePath': filePath},
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
+  Future<void> setMockMotionFeed(
+    String uuid, {
+    List<MotionSample>? samples,
+    String? filePath,
+    bool loop = true,
+  }) => _invoke<void>('setMockMotionFeed', {
+    'uuid': uuid,
+    if (filePath != null) 'filePath': filePath,
+    if (samples != null)
+      'samples': samples.map((s) => s.toMap()).toList(growable: false),
+    'loop': loop,
+  });
 
   @override
-  Future<void> setMockPermission(String permission, String status) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        'setMockPermission',
-        <String, Object?>{'permission': permission, 'status': status},
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
+  Future<String?> simulateMockVoiceInvocation(
+    String uuid, {
+    bool incomplete = false,
+  }) => _invoke<String>('simulateMockVoiceInvocation', {
+    'uuid': uuid,
+    'incomplete': incomplete,
+  });
 
   @override
-  Future<void> setMockPermissionRequestResult(
-    String permission,
-    String status,
-  ) async {
-    try {
-      await methodChannel.invokeMethod<void>(
-        'setMockPermissionRequestResult',
-        <String, Object?>{'permission': permission, 'status': status},
-      );
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  // --- Mock devices stream --------------------------------------------------
+  Future<int> startMockTestServer({int port = 9000}) =>
+      _require<int>('startMockTestServer', {'port': port});
 
   @override
-  Stream<List<DeviceInfo>> mockDevicesStream() {
-    return _mockDevicesStream ??=
-        mockDevicesChannel.receiveBroadcastStream().map((event) {
-      final list = (event as List<Object?>?) ?? const [];
-      return list
-          .map((e) => DeviceInfo.fromMap(e! as Map<Object?, Object?>))
-          .toList(growable: false);
-    });
-  }
+  Future<void> stopMockTestServer() => _invoke<void>('stopMockTestServer');
 
-  // --- Helpers --------------------------------------------------------------
-
-  /// Maps a [PlatformException] thrown from the platform channel to the
-  /// most specific [DatError] subclass we have for its `code`. Anything
-  /// unrecognised passes through as a base [DatError].
-  static DatError _mapPlatformException(PlatformException e) {
-    final code = e.code;
-    final message = e.message ?? '';
-    final details = e.details;
-    switch (code) {
-      case DatErrorCodes.registration:
-        return RegistrationError(
-          code: code,
-          message: message,
-          details: details,
-        );
-      case DatErrorCodes.unregistration:
-        return UnregistrationError(
-          code: code,
-          message: message,
-          details: details,
-        );
-      case DatErrorCodes.handleUrl:
-        return HandleUrlError(code: code, message: message, details: details);
-      case DatErrorCodes.permission:
-      case DatErrorCodes.missingFragmentActivity:
-        return PermissionError(code: code, message: message, details: details);
-      case DatErrorCodes.deviceSession:
-        return DeviceSessionError(
-          code: code,
-          message: message,
-          details: details,
-        );
-      case DatErrorCodes.session:
-        return SessionError(code: code, message: message, details: details);
-      case DatErrorCodes.capture:
-        return CaptureError(code: code, message: message, details: details);
-      case _:
-        return DatError(code: code, message: message, details: details);
-    }
-  }
-
-  /// Maps a `stream_session_errors` channel event into a typed
-  /// [SessionError]. The map shape is `{code, message, details?}` where
-  /// `code` is the typed sub-code (e.g. `thermalCritical`).
-  static DatError _mapStreamSessionError(Object? event) {
-    final map = event as Map<Object?, Object?>? ?? const {};
-    final code = map['code'] as String? ?? DatErrorCodes.session;
-    final message = map['message'] as String? ?? '';
-    final details = map['details'];
-    return SessionError(code: code, message: message, details: details);
-  }
-
-  /// Maps a `device_session_errors` channel event into a typed
-  /// [DeviceSessionError].
-  static DatError _mapDeviceSessionError(Object? event) {
-    final map = event as Map<Object?, Object?>? ?? const {};
-    final code = map['code'] as String? ?? DatErrorCodes.unexpectedError;
-    final message = map['message'] as String? ?? '';
-    final details = map['details'];
-    return DeviceSessionError(code: code, message: message, details: details);
-  }
+  @override
+  Future<bool> sendMockDisplayClick(String uuid, String identifier) async =>
+      await _invoke<bool>('sendMockDisplayClick', {
+        'uuid': uuid,
+        'identifier': identifier,
+      }) ??
+      false;
 }

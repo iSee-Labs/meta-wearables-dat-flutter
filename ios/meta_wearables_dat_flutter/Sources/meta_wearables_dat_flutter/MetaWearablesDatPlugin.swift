@@ -1,1265 +1,484 @@
-// `meta_wearables_dat_flutter` iOS plugin.
+// iOS entry point of the meta_wearables_dat_flutter plugin.
 //
-// Bridges Meta's MWDATCore / MWDATCamera (and optional MWDATMockDevice)
-// frameworks to a Dart MethodChannel + EventChannel surface. Responsibilities:
-//   * Configure `Wearables` once per process.
-//   * Registration: startRegistration, startUnregistration, handleUrl,
-//     plus EventChannels for registration_state and active_device.
-//   * Streaming: startStreamSession (returns a Flutter TextureRegistry id),
-//     stop/pause/resume, plus EventChannels for session_state,
-//     session_errors and video_stream_size.
-//   * Diagnostics: dumpDiagnostics returns a structured Info.plist + SDK
-//     state snapshot for use in host-app debug UI.
-//   * Optional: Mock Device Kit pass-throughs when MWDATMockDevice is linked.
+// Bridges Meta's Wearables Device Access Toolkit 1.0 to Dart:
+//   * one MethodChannel `meta_wearables_dat_flutter`
+//   * EventChannels `meta_wearables_dat_flutter/<name>` (see `channels`)
+// Components own their event sinks; this class only wires channels and
+// routes method calls. Every failure crosses the channel in the shared
+// error shape produced by `WireCodec` / `WireError`.
 
 import Flutter
 import UIKit
 
 #if !canImport(MWDATCore)
-#error("Missing MWDATCore. Enable Flutter's Swift Package Manager support: `flutter config --enable-swift-package-manager` and use Xcode 15.4+.")
+#error("MWDATCore is missing. meta_wearables_dat_flutter needs Flutter >= 3.44 with Swift Package Manager enabled (the default) and Xcode 26.4+.")
 #endif
 
-#if !canImport(MWDATCamera)
-#error("Missing MWDATCamera. Enable Flutter's Swift Package Manager support: `flutter config --enable-swift-package-manager` and use Xcode 15.4+.")
-#endif
-
-import MWDATCore
 import MWDATCamera
-#if canImport(MWDATMockDevice)
+import MWDATCore
+import MWDATDisplay
 import MWDATMockDevice
-#endif
 
-// MARK: - Plugin registration
+public final class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
+  static let pluginVersion = "1.0.0"
+  static let sdkVersion = "1.0.0"
 
-public class MetaWearablesDatPlugin: NSObject, FlutterPlugin {
-  // `Wearables.configure()` is global; ensure exactly-once across hot
-  // restarts by tracking it in a static.
-  private static var didConfigure = false
+  private static var configured = false
+  private static var configureError: String?
 
-  // Stream handlers retained on the plugin instance so their cancellation
-  // tokens survive past `register(with:)`.
-  private let registrationStateHandler = RegistrationStateStreamHandler()
-  private let activeDeviceHandler = ActiveDeviceStreamHandler()
-  private let devicesHandler = DevicesStreamHandler()
-  private let compatibilityHandler = CompatibilityStreamHandler()
+  private weak var registrar: FlutterPluginRegistrar?
 
-  // Streaming. Manager is created lazily on first session start because we
-  // need the texture registry from the registrar.
-  private var sessionManager: MetaSessionManager?
-  private let streamSessionStateHandler = PassthroughStreamHandler()
-  private let streamSessionErrorHandler = PassthroughStreamHandler()
-  private let deviceSessionStateHandler = PassthroughStreamHandler()
-  private let deviceSessionErrorHandler = PassthroughStreamHandler()
-  private let videoSizeHandler = PassthroughStreamHandler()
-  private let videoFramesHandler = PassthroughStreamHandler()
-  private weak var pluginRegistrar: FlutterPluginRegistrar?
-
-  // Mock Device Kit. Lazily created on first use.
-  private var mockManager: MetaMockDeviceManager?
-  private let mockDevicesHandler = PassthroughStreamHandler()
-
-  // Display (MWDATDisplay). Lazily created on first use.
-  private var displayManager: MetaDisplayManager?
-  private let displayStateHandler = PassthroughStreamHandler()
-  private let displayEventsHandler = PassthroughStreamHandler()
+  @MainActor private lazy var hub = DeviceSessionHub()
+  @MainActor private lazy var registration = RegistrationBridge()
+  @MainActor private lazy var deviceState = DeviceStateObserver()
+  @MainActor private lazy var camera = MetaSessionManager(registry: registrar!.textures(), hub: hub)
+  @MainActor private lazy var display = MetaDisplayManager(hub: hub)
+  @MainActor private lazy var mock = MetaMockDeviceManager()
+  @MainActor private lazy var inputs = InputsBridge(hub: hub)
+  @MainActor private lazy var motion = MotionBridge(hub: hub)
+  @MainActor private lazy var speech = SpeechBridge(hub: hub)
+  @MainActor private lazy var voice = VoiceInvocationsBridge()
 
   public static func register(with registrar: FlutterPluginRegistrar) {
-    if !didConfigure {
-      do {
-        try Wearables.configure()
-        didConfigure = true
-      } catch {
-        // Configuration may legitimately fail in unit-test bundles or when
-        // the host app's Info.plist `MWDAT` dict is missing. We log instead
-        // of crashing so the host app can still call non-DAT APIs.
-        print("[meta_wearables_dat_flutter] Wearables.configure() failed: \(error)")
-      }
-    }
-
-    let methodChannel = FlutterMethodChannel(
-      name: "meta_wearables_dat_flutter",
-      binaryMessenger: registrar.messenger()
-    )
-
-    let registrationStateChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/registration_state",
-      binaryMessenger: registrar.messenger()
-    )
-
-    let activeDeviceChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/active_device",
-      binaryMessenger: registrar.messenger()
-    )
-
-    let devicesChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/devices",
-      binaryMessenger: registrar.messenger()
-    )
-
-    let compatibilityChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/compatibility",
-      binaryMessenger: registrar.messenger()
-    )
-
-    let streamSessionStateChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/stream_session_state",
-      binaryMessenger: registrar.messenger()
-    )
-    let streamSessionErrorChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/stream_session_errors",
-      binaryMessenger: registrar.messenger()
-    )
-    let deviceSessionStateChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/device_session_state",
-      binaryMessenger: registrar.messenger()
-    )
-    let deviceSessionErrorChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/device_session_errors",
-      binaryMessenger: registrar.messenger()
-    )
-    let videoSizeChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/video_stream_size",
-      binaryMessenger: registrar.messenger()
-    )
-    let videoFramesChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/video_frames",
-      binaryMessenger: registrar.messenger()
-    )
-    let mockDevicesChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/mock_devices",
-      binaryMessenger: registrar.messenger()
-    )
-    let displayStateChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/display_state",
-      binaryMessenger: registrar.messenger()
-    )
-    let displayEventsChannel = FlutterEventChannel(
-      name: "meta_wearables_dat_flutter/display_events",
-      binaryMessenger: registrar.messenger()
-    )
-
+    configureWearables()
     let instance = MetaWearablesDatPlugin()
-    instance.pluginRegistrar = registrar
-    registrar.addMethodCallDelegate(instance, channel: methodChannel)
-    // Register as a UIApplication delegate so we can auto-forward the
-    // Meta AI registration callback URL to `Wearables.shared.handleUrl`.
-    // Host apps that use the classic AppDelegate lifecycle (no
-    // `UIApplicationSceneManifest` in Info.plist) need no extra wiring —
-    // iOS delivers the URL to `application(_:open:options:)` below.
+    instance.registrar = registrar
+    let channel = FlutterMethodChannel(name: "meta_wearables_dat_flutter", binaryMessenger: registrar.messenger())
+    registrar.addMethodCallDelegate(instance, channel: channel)
     registrar.addApplicationDelegate(instance)
-    // Host apps that DO use a scene manifest need to forward URL events
-    // themselves because iOS delivers them via the scene delegate, not
-    // the app delegate. The example app's SceneDelegate posts
-    // `MetaWearablesDatHandleURL` whenever a URL arrives; we observe it
-    // here and feed it to the SDK. Decouples the example (and any host
-    // app following the same convention) from `MWDATCore`.
+    MainActor.assumeIsolated { instance.registerEventChannels(registrar) }
+
+    // Host apps with a UIScene lifecycle forward callback URLs by posting
+    // `MetaWearablesDatHandleURL` with `userInfo["url"]`.
     NotificationCenter.default.addObserver(
-      instance,
-      selector: #selector(handleURLNotification(_:)),
-      name: Notification.Name("MetaWearablesDatHandleURL"),
-      object: nil,
-    )
-    registrationStateChannel.setStreamHandler(instance.registrationStateHandler)
-    activeDeviceChannel.setStreamHandler(instance.activeDeviceHandler)
-    devicesChannel.setStreamHandler(instance.devicesHandler)
-    compatibilityChannel.setStreamHandler(instance.compatibilityHandler)
-    streamSessionStateChannel.setStreamHandler(instance.streamSessionStateHandler)
-    streamSessionErrorChannel.setStreamHandler(instance.streamSessionErrorHandler)
-    deviceSessionStateChannel.setStreamHandler(instance.deviceSessionStateHandler)
-    deviceSessionErrorChannel.setStreamHandler(instance.deviceSessionErrorHandler)
-    videoSizeChannel.setStreamHandler(instance.videoSizeHandler)
-    videoFramesChannel.setStreamHandler(instance.videoFramesHandler)
-    mockDevicesChannel.setStreamHandler(instance.mockDevicesHandler)
-    instance.mockDevicesHandler.onSinkChange = { [weak instance] sink in
-      Task { @MainActor in
-        instance?.ensureMockManager().setMockDevicesSink(sink)
-      }
-    }
-    displayStateChannel.setStreamHandler(instance.displayStateHandler)
-    displayEventsChannel.setStreamHandler(instance.displayEventsHandler)
-    instance.displayStateHandler.onSinkChange = { [weak instance] sink in
-      Task { @MainActor in
-        instance?.ensureDisplayManager().setDisplayStateSink(sink)
-      }
-    }
-    instance.displayEventsHandler.onSinkChange = { [weak instance] sink in
-      Task { @MainActor in
-        instance?.ensureDisplayManager().setDisplayEventsSink(sink)
-      }
-    }
+      instance, selector: #selector(handleURLNotification(_:)),
+      name: Notification.Name("MetaWearablesDatHandleURL"), object: nil)
+    NotificationCenter.default.addObserver(
+      instance, selector: #selector(didEnterBackground),
+      name: UIApplication.didEnterBackgroundNotification, object: nil)
   }
 
-  @MainActor
-  private func ensureDisplayManager() -> MetaDisplayManager {
-    if let manager = displayManager { return manager }
-    let manager = MetaDisplayManager()
-    displayManager = manager
-    return manager
-  }
-
-  @MainActor
-  private func ensureMockManager() -> MetaMockDeviceManager {
-    if let manager = mockManager { return manager }
-    let manager = MetaMockDeviceManager()
-    mockManager = manager
-    return manager
-  }
-
-  /// Lazily builds the session manager on first use and wires its EventSinks
-  /// to the matching stream handlers.
-  @MainActor
-  private func ensureSessionManager() throws -> MetaSessionManager {
-    if let manager = sessionManager { return manager }
-    guard let registrar = pluginRegistrar else {
-      throw NSError(
-        domain: "meta_wearables_dat_flutter",
-        code: -10,
-        userInfo: [NSLocalizedDescriptionKey: "Plugin registrar is gone"]
-      )
-    }
-    let manager = MetaSessionManager(registry: registrar.textures())
-    streamSessionStateHandler.onSinkChange = { [weak manager] sink in
-      manager?.setSessionStateSink(sink)
-    }
-    streamSessionErrorHandler.onSinkChange = { [weak manager] sink in
-      manager?.setSessionErrorSink(sink)
-    }
-    deviceSessionStateHandler.onSinkChange = { [weak manager] sink in
-      manager?.setDeviceSessionStateSink(sink)
-    }
-    deviceSessionErrorHandler.onSinkChange = { [weak manager] sink in
-      manager?.setDeviceSessionErrorSink(sink)
-    }
-    videoSizeHandler.onSinkChange = { [weak manager] sink in
-      manager?.setVideoSizeSink(sink)
-    }
-    videoFramesHandler.onSinkChange = { [weak manager] sink in
-      manager?.setVideoFramesSink(sink)
-    }
-    sessionManager = manager
-    return manager
-  }
-
-  public func handle(
-    _ call: FlutterMethodCall,
-    result: @escaping FlutterResult
-  ) {
-    switch call.method {
-    case "getPlatformVersion":
-      result("iOS \(UIDevice.current.systemVersion)")
-
-    case "requestAndroidPermissions":
-      // Documented no-op on iOS: iOS uses Info.plist usage strings, not
-      // runtime permission grants. Lets host apps call the API
-      // unconditionally.
-      result(true)
-
-    case "dumpDiagnostics":
-      // FlutterPlugin's `handle` is invoked on the main thread by the
-      // engine; assume isolation so we can call the @MainActor
-      // dumpDiagnostics() synchronously without spawning a Task.
-      result(MainActor.assumeIsolated { Self.dumpDiagnostics() })
-
-    case "startRegistration":
-      // Log the same diagnostics the `dumpDiagnostics` method returns so the
-      // Xcode console always carries the preflight state when registration
-      // fails. Cheap (single bundle read + canOpenURL). Use print() (stderr)
-      // so the line surfaces in `flutter run`; NSLog goes to ASL and is
-      // silently dropped by the device-log adapter on physical devices.
-      let preflight = MainActor.assumeIsolated { Self.dumpDiagnostics() }
-      print("[meta_wearables_dat_flutter] startRegistration preflight:\n" +
-        Self.prettyPrint(preflight))
-
-      Task { @MainActor in
-        do {
-          print("[meta_wearables_dat_flutter] startRegistration -> calling Wearables.shared.startRegistration()")
-          try await Wearables.shared.startRegistration()
-          print("[meta_wearables_dat_flutter] startRegistration -> SDK returned without throwing")
-          result(nil)
-        } catch let error as RegistrationError {
-          let caseName = Self.registrationErrorCaseName(error)
-          print("[meta_wearables_dat_flutter] startRegistration FAILED: " +
-            "\(caseName) (raw=\(error.rawValue))")
-          result(FlutterError(
-            code: "REGISTRATION_ERROR",
-            message: caseName,
-            details: [
-              "rawValue": error.rawValue,
-              "case": caseName,
-              "description": String(describing: error),
-              "preflight": preflight,
-            ]
-          ))
-        } catch {
-          print("[meta_wearables_dat_flutter] startRegistration FAILED (non-RegistrationError): " +
-            String(describing: error))
-          result(FlutterError(
-            code: "REGISTRATION_ERROR",
-            message: error.localizedDescription,
-            details: [
-              "type": String(describing: type(of: error)),
-              "description": String(describing: error),
-              "preflight": preflight,
-            ]
-          ))
-        }
-      }
-
-    case "startUnregistration":
-      Task { @MainActor in
-        do {
-          try await Wearables.shared.startUnregistration()
-          result(nil)
-        } catch let error as UnregistrationError {
-          let caseName = Self.unregistrationErrorCaseName(error)
-          result(FlutterError(
-            code: "UNREGISTRATION_ERROR",
-            message: caseName,
-            details: [
-              "case": caseName,
-              "rawValue": error.rawValue,
-              "description": String(describing: error),
-            ]
-          ))
-        } catch {
-          result(FlutterError(
-            code: "UNREGISTRATION_ERROR",
-            message: error.localizedDescription,
-            details: nil
-          ))
-        }
-      }
-
-    case "handleUrl":
-      guard
-        let args = call.arguments as? [String: Any?],
-        let urlString = args["url"] as? String,
-        let url = URL(string: urlString)
-      else {
-        result(FlutterError(
-          code: "INVALID_ARGUMENT",
-          message: "handleUrl requires { url: String }",
-          details: nil
-        ))
+  private static func configureWearables() {
+    guard !configured else { return }
+    do {
+      try Wearables.configure()
+      configured = true
+    } catch {
+      if error == .alreadyConfigured {
+        configured = true
         return
       }
-      print("[meta_wearables_dat_flutter] handleUrl <- received: \(urlString)")
-      Task { @MainActor in
-        do {
-          let consumed = try await Wearables.shared.handleUrl(url)
-          print("[meta_wearables_dat_flutter] handleUrl -> SDK consumed=\(consumed)")
-          result(consumed)
-        } catch let error as WearablesHandleURLError {
-          let caseName = Self.handleUrlErrorCaseName(error)
-          print("[meta_wearables_dat_flutter] handleUrl FAILED: \(caseName) (raw=\(error.rawValue))")
-          result(FlutterError(
-            code: "HANDLE_URL_ERROR",
-            message: caseName,
-            details: [
-              "case": caseName,
-              "rawValue": error.rawValue,
-              "description": String(describing: error),
-            ]
-          ))
-        } catch let error as RegistrationError {
-          let caseName = Self.registrationErrorCaseName(error)
-          print("[meta_wearables_dat_flutter] handleUrl FAILED: \(caseName) (raw=\(error.rawValue))")
-          result(FlutterError(
-            code: "REGISTRATION_ERROR",
-            message: caseName,
-            details: [
-              "case": caseName,
-              "rawValue": error.rawValue,
-              "description": String(describing: error),
-            ]
-          ))
-        } catch {
-          print("[meta_wearables_dat_flutter] handleUrl FAILED (non-typed): \(error)")
-          result(FlutterError(
-            code: "HANDLE_URL_ERROR",
-            message: error.localizedDescription,
-            details: nil
-          ))
-        }
-      }
-
-    case "getRegistrationState":
-      result(Wearables.shared.registrationState.rawValue)
-
-    case "requestCameraPermission":
-      Task { @MainActor in
-        do {
-          let status = try await Wearables.shared.requestPermission(.camera)
-          result(status == .granted)
-        } catch let error as PermissionError {
-          result(FlutterError(
-            code: "PERMISSION_ERROR",
-            message: String(describing: error),
-            details: nil
-          ))
-        } catch {
-          result(FlutterError(
-            code: "PERMISSION_ERROR",
-            message: error.localizedDescription,
-            details: nil
-          ))
-        }
-      }
-
-    case "getCameraPermissionStatus":
-      Task { @MainActor in
-        do {
-          let status = try await Wearables.shared.checkPermissionStatus(.camera)
-          result(status == .granted)
-        } catch let error as PermissionError {
-          result(FlutterError(
-            code: "PERMISSION_ERROR",
-            message: String(describing: error),
-            details: nil
-          ))
-        } catch {
-          result(FlutterError(
-            code: "PERMISSION_ERROR",
-            message: error.localizedDescription,
-            details: nil
-          ))
-        }
-      }
-
-    case "startStreamSession":
-      let args = call.arguments as? [String: Any?]
-      let deviceUUID = args?["deviceUuid"] as? String
-      let fps = (args?["fps"] as? Int) ?? 30
-      let qualityRaw = (args?["quality"] as? String) ?? "high"
-      let deviceKinds = (args?["deviceKinds"] as? [String]).map(Set.init)
-      let videoCodecRaw = (args?["videoCodec"] as? String) ?? "raw"
-      let videoCodec: VideoCodec =
-        (videoCodecRaw == "hvc1") ? .hvc1 : .raw
-      let quality: StreamingResolution = {
-        switch qualityRaw {
-        case "low": return .low
-        case "medium": return .medium
-        default: return .high
-        }
-      }()
-      Task { @MainActor in
-        let diag = Self.dumpDiagnostics()
-        print("[meta_wearables_dat_flutter] startStreamSession " +
-          "deviceUuid=\(deviceUUID ?? "<auto>") fps=\(fps) " +
-          "quality=\(qualityRaw) kinds=\(deviceKinds ?? []) " +
-          "codec=\(videoCodecRaw)")
-        print("[meta_wearables_dat_flutter] startStreamSession devices=" +
-          String(describing: diag["devices"] ?? [:]))
-        do {
-          let manager = try ensureSessionManager()
-          let id = try await manager.startSession(
-            deviceUUID: deviceUUID,
-            fps: fps,
-            quality: quality,
-            deviceKinds: deviceKinds,
-            videoCodec: videoCodec,
-          )
-          print("[meta_wearables_dat_flutter] startStreamSession -> textureId=\(id)")
-          result(id)
-        } catch let dse as DeviceSessionError {
-          let caseName = Self.deviceSessionErrorCaseName(dse)
-          print("[meta_wearables_dat_flutter] startStreamSession FAILED: " +
-            "DeviceSessionError.\(caseName)")
-          result(FlutterError(
-            code: "SESSION_ERROR",
-            message: caseName,
-            details: [
-              "case": caseName,
-              "description": String(describing: dse),
-              "errorDescription": dse.errorDescription ?? "",
-              "devices": diag["devices"] ?? [:],
-            ]
-          ))
-        } catch {
-          print("[meta_wearables_dat_flutter] startStreamSession FAILED: \(error)")
-          result(FlutterError(
-            code: "SESSION_ERROR",
-            message: error.localizedDescription,
-            details: [
-              "type": String(describing: type(of: error)),
-              "description": String(describing: error),
-              "devices": diag["devices"] ?? [:],
-            ]
-          ))
-        }
-      }
-
-    case "getDevices":
-      Task { @MainActor in
-        result(Self.encodeAllDevices())
-      }
-
-    case "stopStreamSession":
-      Task { @MainActor in
-        await sessionManager?.stopSession()
-        result(nil)
-      }
-
-    case "pauseStreamSession":
-      Task { @MainActor in
-        await sessionManager?.pauseSession()
-        result(nil)
-      }
-
-    case "resumeStreamSession":
-      Task { @MainActor in
-        await sessionManager?.resumeSession()
-        result(nil)
-      }
-
-    case "startDisplaySession":
-      let args = call.arguments as? [String: Any?]
-      let deviceUUID = args?["deviceUuid"] as? String
-      Task { @MainActor in
-        do {
-          try await ensureDisplayManager().startDisplaySession(
-            deviceUUID: deviceUUID,
-          )
-          result(nil)
-        } catch let dse as DeviceSessionError {
-          result(FlutterError(
-            code: "DEVICE_SESSION_ERROR",
-            message: Self.deviceSessionErrorCaseName(dse),
-            details: ["description": String(describing: dse)]
-          ))
-        } catch {
-          result(FlutterError(
-            code: "DEVICE_SESSION_ERROR",
-            message: error.localizedDescription,
-            details: ["description": String(describing: error)]
-          ))
-        }
-      }
-
-    case "sendDisplayView":
-      let args = call.arguments as? [String: Any?]
-      let view = (args?["view"] as? [String: Any]) ?? [:]
-      Task { @MainActor in
-        do {
-          try await ensureDisplayManager().sendDisplayView(view)
-          result(nil)
-        } catch {
-          result(FlutterError(
-            code: "DEVICE_SESSION_ERROR",
-            message: error.localizedDescription,
-            details: ["description": String(describing: error)]
-          ))
-        }
-      }
-
-    case "stopDisplaySession":
-      Task { @MainActor in
-        await displayManager?.stopDisplaySession()
-        result(nil)
-      }
-
-    case "enableMockDevice":
-      let args = call.arguments as? [String: Any?]
-      let initiallyRegistered = (args?["initiallyRegistered"] as? Bool) ?? true
-      let initialPermissionsGranted =
-        (args?["initialPermissionsGranted"] as? Bool) ?? true
-      Task { @MainActor in
-        ensureMockManager().enable(
-          initiallyRegistered: initiallyRegistered,
-          initialPermissionsGranted: initialPermissionsGranted,
-        )
-        result(nil)
-      }
-
-    case "disableMockDevice":
-      Task { @MainActor in
-        ensureMockManager().disable()
-        result(nil)
-      }
-
-    case "isMockDeviceEnabled":
-      Task { @MainActor in
-        result(ensureMockManager().isEnabled())
-      }
-
-    case "pairMockRayBanMeta":
-      Task { @MainActor in
-        let uuid = ensureMockManager().pairRayBanMeta()
-        result(uuid)
-      }
-
-    case "pairedMockDevices":
-      Task { @MainActor in
-        result(ensureMockManager().pairedDevices())
-      }
-
-    case "unpairMockDevice":
-      let args = call.arguments as? [String: Any?]
-      let uuid = args?["uuid"] as? String ?? ""
-      Task { @MainActor in
-        do {
-          try ensureMockManager().unpair(uuid: uuid)
-          result(nil)
-        } catch {
-          result(FlutterError(
-            code: "MOCK_ERROR",
-            message: error.localizedDescription,
-            details: nil
-          ))
-        }
-      }
-
-    case "mockPowerOn", "mockPowerOff", "mockDon", "mockDoff", "mockFold", "mockUnfold":
-      let args = call.arguments as? [String: Any?]
-      let uuid = args?["uuid"] as? String ?? ""
-      let methodName = call.method
-      Task { @MainActor in
-        do {
-          let manager = ensureMockManager()
-          switch methodName {
-          case "mockPowerOn": try manager.powerOn(uuid: uuid)
-          case "mockPowerOff": try manager.powerOff(uuid: uuid)
-          case "mockDon": try manager.don(uuid: uuid)
-          case "mockDoff": try manager.doff(uuid: uuid)
-          case "mockFold": try manager.fold(uuid: uuid)
-          case "mockUnfold": try manager.unfold(uuid: uuid)
-          default: break
-          }
-          result(nil)
-        } catch {
-          result(FlutterError(
-            code: "MOCK_ERROR",
-            message: error.localizedDescription,
-            details: nil
-          ))
-        }
-      }
-
-    case "setMockCameraFacing":
-      let args = call.arguments as? [String: Any?]
-      let uuid = args?["uuid"] as? String ?? ""
-      let facingRaw = (args?["facing"] as? String) ?? "rear"
-      let facing: CameraFacing = (facingRaw == "front") ? .front : .back
-      Task { @MainActor in
-        do {
-          try await ensureMockManager().setCameraFacing(uuid: uuid, facing: facing)
-          result(nil)
-        } catch {
-          result(FlutterError(
-            code: "MOCK_ERROR",
-            message: error.localizedDescription,
-            details: nil
-          ))
-        }
-      }
-
-    case "setMockCameraFeed":
-      let args = call.arguments as? [String: Any?]
-      let uuid = args?["uuid"] as? String ?? ""
-      let path = args?["filePath"] as? String
-      Task { @MainActor in
-        do {
-          try await ensureMockManager().setCameraFeed(uuid: uuid, filePath: path)
-          result(nil)
-        } catch {
-          result(FlutterError(
-            code: "MOCK_ERROR",
-            message: error.localizedDescription,
-            details: nil
-          ))
-        }
-      }
-
-    case "setMockCapturedImage":
-      let args = call.arguments as? [String: Any?]
-      let uuid = args?["uuid"] as? String ?? ""
-      let path = args?["filePath"] as? String
-      Task { @MainActor in
-        do {
-          try await ensureMockManager().setCapturedImage(uuid: uuid, filePath: path)
-          result(nil)
-        } catch {
-          result(FlutterError(
-            code: "MOCK_ERROR",
-            message: error.localizedDescription,
-            details: nil
-          ))
-        }
-      }
-
-    case "setMockPermission", "setMockPermissionRequestResult":
-      let args = call.arguments as? [String: Any?]
-      let perm = args?["permission"] as? String ?? ""
-      let status = args?["status"] as? String ?? ""
-      let methodName = call.method
-      Task { @MainActor in
-        do {
-          let manager = ensureMockManager()
-          if methodName == "setMockPermission" {
-            try manager.setPermission(permission: perm, status: status)
-          } else {
-            try manager.setPermissionRequestResult(
-              permission: perm,
-              status: status,
-            )
-          }
-          result(nil)
-        } catch {
-          result(FlutterError(
-            code: "MOCK_ERROR",
-            message: error.localizedDescription,
-            details: nil
-          ))
-        }
-      }
-
-    case "enableBackgroundStreaming":
-      Task { @MainActor in
-        do {
-          try BackgroundStreamingController.shared.enable()
-          // Hand the software-only flag to the session manager, if any.
-          sessionManager?.setBackgroundStreamingEnabled(true)
-          result(nil)
-        } catch {
-          result(FlutterError(
-            code: "SESSION_ERROR",
-            message: "Failed to enable background streaming: " +
-              error.localizedDescription,
-            details: nil,
-          ))
-        }
-      }
-
-    case "disableBackgroundStreaming":
-      Task { @MainActor in
-        BackgroundStreamingController.shared.disable()
-        sessionManager?.setBackgroundStreamingEnabled(false)
-        result(nil)
-      }
-
-    case "capturePhoto":
-      let args = call.arguments as? [String: Any?]
-      let formatRaw = (args?["format"] as? String) ?? "jpeg"
-      let format: PhotoCaptureFormat = (formatRaw == "heic") ? .heic : .jpeg
-      Task { @MainActor in
-        do {
-          guard let manager = sessionManager else {
-            throw NSError(
-              domain: "meta_wearables_dat_flutter",
-              code: -30,
-              userInfo: [
-                NSLocalizedDescriptionKey:
-                  "No stream session - call startStreamSession first",
-              ],
-            )
-          }
-          let photo = try await manager.capturePhoto(format: format)
-          let outFormat = (photo.format == .heic) ? "heic" : "jpeg"
-          result([
-            "bytes": FlutterStandardTypedData(bytes: photo.data),
-            "format": outFormat,
-          ] as [String: Any])
-        } catch {
-          result(FlutterError(
-            code: "CAPTURE_ERROR",
-            message: error.localizedDescription,
-            details: nil
-          ))
-        }
-      }
-
-    default:
-      result(FlutterMethodNotImplemented)
+      configureError = String(describing: error)
+      print("[meta_wearables_dat_flutter] Wearables.configure() failed: \(error). "
+        + "Check the MWDAT dictionary in Info.plist.")
     }
   }
 
-  // MARK: - UIApplicationDelegate (deep-link forwarding)
+  // MARK: - Event channels
 
-  /// Auto-forwards the Meta AI registration-callback URL to the SDK.
-  ///
-  /// When the host app calls `MetaWearablesDat.startRegistration()`, Meta
-  /// AI opens its permission UI and (on approval) redirects back to the
-  /// host app via its declared URL scheme (e.g.
-  /// `metawearablesdatexample://...`). Without this hook the host app
-  /// would have to wire its own deep-link plumbing to call
-  /// `MetaWearablesDat.handleUrl(url)`. Because the plugin already owns
-  /// `Wearables.shared`, we can do it transparently — the existing
-  /// `registrationStateStream` and `activeDeviceStream` observers pick
-  /// up the resulting state change and surface it to Dart without any
-  /// host-app code.
-  ///
-  /// Returns `true` when the SDK consumed the URL so the system stops
-  /// the AppDelegate chain; otherwise `false` so other plugins / the
-  /// host app's own AppDelegate get a shot.
-  public func application(
-    _ application: UIApplication,
-    open url: URL,
-    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
-  ) -> Bool {
-    print("[meta_wearables_dat_flutter] application(open:) <- \(url)")
-    consumeUrl(url, source: "application(open:)")
-    return true
-  }
-
-  /// Notification-based URL bridge used by host apps with a
-  /// `UISceneDelegate`. They post `MetaWearablesDatHandleURL` from
-  /// `scene(_:openURLContexts:)` with a `url: URL` in `userInfo`.
-  @objc private func handleURLNotification(_ notification: Notification) {
-    guard let url = notification.userInfo?["url"] as? URL else {
-      print("[meta_wearables_dat_flutter] handleURLNotification missing url")
-      return
+  @MainActor
+  private func registerEventChannels(_ registrar: FlutterPluginRegistrar) {
+    let messenger = registrar.messenger()
+    func bind(_ name: String, _ handler: @autoclosure () -> NSObject & FlutterStreamHandler) {
+      let channel = FlutterEventChannel(name: "meta_wearables_dat_flutter/\(name)", binaryMessenger: messenger)
+      channel.setStreamHandler(Self.configured || name == "mock_devices"
+        ? handler() : NotConfiguredStreamHandler(message: Self.configureError))
     }
-    print("[meta_wearables_dat_flutter] handleURLNotification <- \(url)")
-    consumeUrl(url, source: "handleURLNotification")
+    bind("registration_state", registration.stateSink)
+    bind("registration_errors", registration.errorSink)
+    bind("registration_requests", registration.requestSink)
+    bind("active_device", deviceState.activeDeviceSink)
+    bind("devices", deviceState.devicesSink)
+    bind("device_state", deviceState.deviceStateSink)
+    bind("compatibility", deviceState.compatibilitySink)
+    bind("device_session_state", hub.stateSink)
+    bind("device_session_errors", hub.errorSink)
+    bind("stream_session_state", camera.stateSink)
+    bind("stream_session_errors", camera.errorSink)
+    bind("camera_state", camera.cameraStateSink)
+    bind("video_stream_size", camera.sizeSink)
+    bind("video_frames", camera.framesSink)
+    bind("audio_frames", camera.audioSink)
+    bind("photo_state", camera.photoStateSink)
+    bind("photo_progress", camera.photoProgressSink)
+    bind("photo_errors", camera.photoErrorSink)
+    bind("display_state", display.stateSink)
+    bind("display_events", display.eventsSink)
+    bind("display_errors", display.errorSink)
+    bind("inputs_state", inputs.stateSink)
+    bind("inputs_events", inputs.eventsSink)
+    bind("inputs_errors", inputs.errorSink)
+    bind("motion_state", motion.stateSink)
+    bind("motion_samples", motion.samplesSink)
+    bind("motion_errors", motion.errorSink)
+    bind("speech_state", speech.stateSink)
+    bind("speech_transcriptions", speech.transcriptionsSink)
+    bind("speech_errors", speech.errorSink)
+    bind("voice_invocations", voice.invocationsSink)
+    bind("voice_state", voice.stateSink)
+    bind("voice_errors", voice.errorSink)
+    bind("mock_devices", mock.devicesSink)
   }
 
-  /// Forwards the URL to the SDK in a `Task` so we can return synchronously
-  /// to the UIApplication / scene delegate callers.
-  private func consumeUrl(_ url: URL, source: String) {
+  // MARK: - Method calls
+
+  public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     Task { @MainActor in
       do {
-        let consumed = try await Wearables.shared.handleUrl(url)
-        print("[meta_wearables_dat_flutter] \(source) consumed=\(consumed)")
+        result(try await self.route(call))
       } catch {
-        print("[meta_wearables_dat_flutter] \(source) handleUrl FAILED: \(error)")
+        let wire = WireErrors.from(error)
+        print("[meta_wearables_dat_flutter] \(call.method) failed: \(wire)")
+        result(wire.flutterError)
+      }
+    }
+  }
+
+  /// Methods that work without a configured `Wearables` instance.
+  private static let unconfiguredMethods: Set<String> = [
+    "getPlatformVersion", "dumpDiagnostics", "requestAndroidPermissions",
+  ]
+
+  @MainActor
+  private func route(_ call: FlutterMethodCall) async throws -> Any? {
+    let args = call.arguments as? [String: Any] ?? [:]
+    if !Self.configured, !Self.unconfiguredMethods.contains(call.method) {
+      throw WireError(
+        category: WireCategory.plugin, caseName: "wearablesNotConfigured",
+        message: "Wearables.configure() failed: \(Self.configureError ?? "unknown error"). "
+          + "Check the MWDAT dictionary in Info.plist.")
+    }
+    func string(_ key: String) -> String? { args[key] as? String }
+    func required(_ key: String) throws -> String {
+      guard let value = args[key] as? String, !value.isEmpty else {
+        throw WireError.invalidArgument("\(call.method) requires a non-empty '\(key)'.")
+      }
+      return value
+    }
+
+    switch call.method {
+    // Platform & diagnostics
+    case "getPlatformVersion":
+      return "iOS \(UIDevice.current.systemVersion)"
+    case "dumpDiagnostics":
+      return diagnostics()
+    case "requestAndroidPermissions":
+      return true  // iOS uses Info.plist usage strings.
+
+    // Registration
+    case "getRegistrationState":
+      return registration.registrationState()
+    case "startRegistration":
+      try await registration.startRegistration()
+      return nil
+    case "startUnregistration":
+      await hub.stopAll()
+      try await registration.startUnregistration()
+      return nil
+    case "handleUrl":
+      guard let url = URL(string: try required("url")) else {
+        throw WireError(category: WireCategory.handleUrl, caseName: "invalidUrl", message: "Not a valid URL.")
+      }
+      return try await registration.handleUrl(url)
+    case "continueRegistrationRequest":
+      try await registration.answer(requestId: try required("requestId"), accept: true)
+      return nil
+    case "cancelRegistrationRequest":
+      try await registration.answer(requestId: try required("requestId"), accept: false)
+      return nil
+
+    // Permissions & Meta AI navigation
+    case "requestPermission":
+      return try await registration.requestPermission(string("permission"))
+    case "checkPermissionStatus":
+      return try await registration.checkPermission(string("permission"))
+    case "openFirmwareUpdate":
+      try await registration.openFirmwareUpdate()
+      return nil
+    case "openDatGlassesAppUpdate":
+      try await registration.openDatGlassesAppUpdate()
+      return nil
+
+    // Devices
+    case "getDevices":
+      return deviceState.allDevices()
+    case "getDevice":
+      return deviceState.device(try required("deviceUuid"))
+    case "getSessionDevice":
+      return hub.sessionDevice()
+
+    // Camera
+    case "startStreamSession":
+      return try await camera.startSession(try StreamSessionArgs(args))
+    case "stopStreamSession":
+      await camera.stopSession()
+      return nil
+    case "capturePhoto":
+      let format: PhotoCaptureFormat = string("format") == "heic" ? .heic : .jpeg
+      let photo = try await camera.capturePhoto(format: format)
+      return [
+        "bytes": FlutterStandardTypedData(bytes: photo.data),
+        "format": photo.format == .heic ? "heic" : "jpeg",
+      ] as [String: Any]
+    case "capturePhotoHq":
+      let resolution = PhotoResolution(rawValue: string("resolution") ?? "medium") ?? .medium
+      let quality = PhotoQuality(rawValue: string("quality") ?? "medium") ?? .medium
+      let photo = try await camera.captureHqPhoto(resolution: resolution, quality: quality)
+      var map: [String: Any] = [
+        "bytes": FlutterStandardTypedData(bytes: photo.imageData),
+        "timestampMs": Int(photo.timestamp.timeIntervalSince1970 * 1000),
+      ]
+      if let metadata = photo.metadata { map["metadata"] = FlutterStandardTypedData(bytes: metadata) }
+      return map
+    case "enableBackgroundStreaming":
+      try BackgroundStreamingController.shared.enable()
+      camera.softwareDecoder = true
+      return nil
+    case "disableBackgroundStreaming":
+      BackgroundStreamingController.shared.disable()
+      camera.softwareDecoder = false
+      return nil
+
+    // Display
+    case "startDisplaySession":
+      try await display.startDisplaySession(deviceUuid: string("deviceUuid"))
+      return nil
+    case "sendDisplayView":
+      guard let view = args["view"] as? [String: Any] else {
+        throw WireError.invalidArgument("sendDisplayView requires a 'view' map.")
+      }
+      return try await display.sendView(view)
+    case "clearDisplay":
+      try await display.clearDisplay()
+      return nil
+    case "stopDisplayVideo":
+      await display.stopVideo()
+      return nil
+    case "stopDisplaySession":
+      await display.stopDisplaySession()
+      return nil
+
+    // Experimental capabilities
+    case "startInputs":
+      try await inputs.start(args: args)
+      return nil
+    case "stopInputs":
+      await inputs.stop()
+      return nil
+    case "startMotion":
+      try await motion.start(args: args)
+      return nil
+    case "stopMotion":
+      await motion.stop()
+      return nil
+    case "startSpeech":
+      try await speech.start(args: args)
+      return nil
+    case "stopSpeech":
+      await speech.stop()
+      return nil
+    case "startVoiceInvocations":
+      try await voice.start(deviceUuid: string("deviceUuid"))
+      return nil
+    case "stopVoiceInvocations":
+      await voice.stop()
+      return nil
+    case "respondVoiceInvocation":
+      return try await voice.respond(
+        invocationId: try required("invocationId"),
+        success: (args["success"] as? Bool) ?? true,
+        actionOutput: string("actionOutput"))
+
+    // Mock Device Kit
+    case "enableMockDevice":
+      await mock.enable(
+        initiallyRegistered: (args["initiallyRegistered"] as? Bool) ?? true,
+        initialPermissionsGranted: (args["initialPermissionsGranted"] as? Bool) ?? true)
+      return nil
+    case "disableMockDevice":
+      await hub.stopAll()
+      await mock.disable()
+      return nil
+    case "isMockDeviceEnabled":
+      return mock.isEnabled
+    case "pairMockGlasses":
+      guard let model = WireCodec.glassesModel(string("model") ?? "rayBanMeta") else {
+        throw WireError.invalidArgument("Unknown glasses model '\(string("model") ?? "")'.")
+      }
+      return try mock.pair(model: model)
+    case "pairedMockDevices":
+      return mock.pairedDevices()
+    case "unpairMockDevice":
+      try await mock.unpair(uuid: try required("uuid"))
+      return nil
+    case "mockPowerOn", "mockPowerOff", "mockDon", "mockDoff", "mockFold", "mockUnfold",
+      "mockCaptouchTap", "mockCaptouchTapAndHold":
+      try mock.perform(call.method, uuid: try required("uuid"))
+      return nil
+    case "setMockBatteryLevel":
+      try mock.setBatteryLevel(uuid: try required("uuid"), level: args["level"] as? Int)
+      return nil
+    case "setMockChargingState":
+      try mock.setChargingState(uuid: try required("uuid"), raw: string("state"))
+      return nil
+    case "setMockThermalLevel":
+      try mock.setThermalLevel(uuid: try required("uuid"), raw: string("level"))
+      return nil
+    case "setMockCameraFacing":
+      try mock.setCameraFacing(uuid: try required("uuid"), facing: string("facing"))
+      return nil
+    case "setMockCameraFeed":
+      try mock.setCameraFeed(uuid: try required("uuid"), path: string("filePath"))
+      return nil
+    case "setMockCapturedImage":
+      try mock.setCapturedImage(uuid: try required("uuid"), path: string("filePath"))
+      return nil
+    case "setMockCapturedPhoto":
+      try mock.setCapturedPhoto(uuid: try required("uuid"), path: string("filePath"))
+      return nil
+    case "simulateMockCaptureFailure":
+      try mock.simulateCaptureFailure(uuid: try required("uuid"))
+      return nil
+    case "setMockPermission":
+      try mock.setPermission(string("permission"), status: string("status"), requestResult: false)
+      return nil
+    case "setMockPermissionRequestResult":
+      try mock.setPermission(string("permission"), status: string("status"), requestResult: true)
+      return nil
+    case "mockInput":
+      try mock.input(uuid: try required("uuid"), args: args)
+      return nil
+    case "mockSpeech":
+      try mock.speech(uuid: try required("uuid"), args: args)
+      return nil
+    case "setMockMotionFeed":
+      try mock.setMotionFeed(uuid: try required("uuid"), args: args)
+      return nil
+    case "simulateMockVoiceInvocation":
+      return try mock.voice(uuid: try required("uuid"), incomplete: (args["incomplete"] as? Bool) ?? false)
+    case "startMockTestServer":
+      return try await mock.startTestServer(port: (args["port"] as? Int) ?? 9000)
+    case "stopMockTestServer":
+      await mock.stopTestServer()
+      return nil
+    case "sendMockDisplayClick":
+      return try mock.sendDisplayClick(uuid: try required("uuid"), identifier: try required("identifier"))
+
+    default:
+      return FlutterMethodNotImplemented
+    }
+  }
+
+  // MARK: - URL forwarding
+
+  /// Forwards Meta AI callback URLs (those carrying `metaWearablesAction`)
+  /// to the SDK. Other URLs are left to the host app.
+  public func application(
+    _ application: UIApplication, open url: URL,
+    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+  ) -> Bool {
+    guard Self.configured else { return false }
+    return MainActor.assumeIsolated { registration.consume(url) }
+  }
+
+  @objc private func handleURLNotification(_ notification: Notification) {
+    guard Self.configured, let url = notification.userInfo?["url"] as? URL else { return }
+    Task { @MainActor in _ = self.registration.consume(url) }
+  }
+
+  // MARK: - Background policy
+
+  /// Mirrors Meta's CameraAccess sample: without background streaming the
+  /// stream is ended when the app backgrounds. With background streaming,
+  /// `raw` frames pause (the SDK only delivers them in the foreground)
+  /// while `hvc1` keeps flowing.
+  @objc private func didEnterBackground() {
+    Task { @MainActor in
+      guard Self.configured, self.camera.isStreaming else { return }
+      if BackgroundStreamingController.shared.isEnabled {
+        if self.camera.activeCodec == .raw {
+          self.camera.errorSink.send(WireError(
+            category: WireCategory.stream, caseName: "rawPausedInBackground",
+            message: "Raw frames pause while the app is in the background; use hvc1 to keep streaming.",
+            extras: ["severity": "warning"]
+          ).eventPayload)
+        }
+      } else {
+        self.camera.errorSink.send(WireError(
+          category: WireCategory.stream, caseName: "stoppedInBackground",
+          message: "The stream was stopped because the app moved to the background. "
+            + "Call enableBackgroundStreaming() to keep it running.",
+          extras: ["severity": "warning"]
+        ).eventPayload)
+        await self.camera.stopSession()
       }
     }
   }
 
   // MARK: - Diagnostics
 
-  /// Returns a structured snapshot of everything the iOS DAT SDK validates
-  /// at `startRegistration()` time. Surfaced through the `dumpDiagnostics`
-  /// method channel call so host apps can show it in their UI when a
-  /// registration error happens, and also `print`-ed on every
-  /// `startRegistration` call. Pure read; no side effects.
-  ///
-  /// Marked `@MainActor` because `Wearables.shared.devices` /
-  /// `deviceForIdentifier` / `Device.linkState` are all main-actor
-  /// isolated by the SDK.
   @MainActor
-  static func dumpDiagnostics() -> [String: Any] {
+  private func diagnostics() -> [String: Any] {
     let info = Bundle.main.infoDictionary ?? [:]
-    let mwdat = info["MWDAT"] as? [String: Any] ?? [:]
-    let queries = info["LSApplicationQueriesSchemes"] as? [String] ?? []
-    let urlTypes = info["CFBundleURLTypes"] as? [[String: Any]] ?? []
-    let urlSchemes = urlTypes
-      .compactMap { $0["CFBundleURLSchemes"] as? [String] }
-      .flatMap { $0 }
-
-    let fbViewappURL = URL(string: "fb-viewapp://")!
-    let canOpenFbViewapp = UIApplication.shared.canOpenURL(fbViewappURL)
-    // `fb-viewapp` is the scheme the SDK preflights when opening Meta AI.
-    // If `canOpenURL` returns false, the most common cause is a missing
-    // `LSApplicationQueriesSchemes` entry, but it can also mean Meta AI
-    // is not installed.
-
-    let regState = Wearables.shared.registrationState
-    let regStateName: String
-    switch regState {
-    case .unavailable: regStateName = "unavailable"
-    case .available: regStateName = "available"
-    case .registering: regStateName = "registering"
-    case .registered: regStateName = "registered"
-    @unknown default: regStateName = "unknown(\(regState.rawValue))"
-    }
-
-    // Devices the SDK currently knows about and the state of their
-    // BLE link. `noEligibleDevice` from `startStreamSession` almost
-    // always means every device here has `linkState != connected`.
-    // Surface enough info that the app UI can tell the user what to
-    // do (turn glasses on, take them out of the case, don them).
-    let deviceIds = Wearables.shared.devices
-    var deviceDumps: [[String: Any]] = []
-    for id in deviceIds {
-      let device = Wearables.shared.deviceForIdentifier(id)
-      let linkStateName: String
-      switch device?.linkState {
-      case .disconnected?: linkStateName = "disconnected"
-      case .connecting?: linkStateName = "connecting"
-      case .connected?: linkStateName = "connected"
-      case nil: linkStateName = "unknown"
-      @unknown default: linkStateName = "unknown"
-      }
-      let kindName: String
-      switch device?.deviceType() {
-      case .rayBanMeta?, .rayBanMetaOptics?: kindName = "rayBanMeta"
-      case .metaRayBanDisplay?: kindName = "rayBanDisplay"
-      case .oakleyMetaHSTN?, .oakleyMetaVanguard?: kindName = "oakleyMeta"
-      case .unknown?, .none: kindName = "unknown"
-      @unknown default: kindName = "unknown"
-      }
-      deviceDumps.append([
-        "id": id,
-        "name": device?.nameOrId() ?? id,
-        "kind": kindName,
-        "linkState": linkStateName,
-      ])
-    }
-
-    return [
-      "platform": "iOS",
-      "iosVersion": UIDevice.current.systemVersion,
-      "bundleId": Bundle.main.bundleIdentifier ?? "<unknown>",
-      "bundleVersion": (info["CFBundleShortVersionString"] as? String) ?? "",
-      "wearablesConfigured": Self.didConfigure,
-      "registrationState": [
-        "raw": regState.rawValue,
-        "name": regStateName,
-      ],
-      "devices": [
-        "count": deviceDumps.count,
-        "list": deviceDumps,
-        "anyConnected": deviceDumps.contains { ($0["linkState"] as? String) == "connected" },
-      ] as [String: Any],
-      "infoPlist": [
-        "MWDAT": mwdat,
-        "LSApplicationQueriesSchemes": queries,
-        "CFBundleURLSchemes": urlSchemes,
-      ],
-      "preflight": [
-        "canOpenFbViewapp": canOpenFbViewapp,
-        "fbViewappInQueriesSchemes": queries.contains("fb-viewapp"),
-        "mwdatHasMetaAppID":
-          (mwdat["MetaAppID"] as? String).map { !$0.isEmpty } ?? false,
-        "mwdatHasAppLinkURLScheme":
-          (mwdat["AppLinkURLScheme"] as? String).map { !$0.isEmpty } ?? false,
-        "mwdatHasEmptyClientToken":
-          (mwdat["ClientToken"] as? String) == "",
-        "mwdatHasEmptyTeamID":
-          (mwdat["TeamID"] as? String) == "",
+    var map: [String: Any] = [
+      "platform": "ios",
+      "pluginVersion": Self.pluginVersion,
+      "sdkVersion": Self.sdkVersion,
+      "os": "iOS \(UIDevice.current.systemVersion)",
+      "bundleId": Bundle.main.bundleIdentifier ?? "",
+      "wearablesConfigured": Self.configured,
+      "findings": InfoPlistValidator.validate(info).map(\.map),
+      "resources": ResourceLedger.shared.snapshot(),
+      "experimentalModulesLinked": ExperimentalModules.linked,
+      "crashReportingOptOut": InfoPlistValidator.optOut(info, key: "CrashReporting"),
+      "analyticsOptOut": InfoPlistValidator.optOut(info, key: "Analytics"),
+      "backgroundStreamingEnabled": BackgroundStreamingController.shared.isEnabled,
+      "config": [
+        "MWDAT": (info["MWDAT"] as? [String: Any]) ?? [:],
+        "CFBundleURLSchemes": (info["CFBundleURLTypes"] as? [[String: Any]] ?? [])
+          .compactMap { $0["CFBundleURLSchemes"] as? [String] }.flatMap { $0 },
+        "UIBackgroundModes": info["UIBackgroundModes"] as? [String] ?? [],
+        "UISupportedExternalAccessoryProtocols": info["UISupportedExternalAccessoryProtocols"] as? [String] ?? [],
       ],
     ]
-  }
-
-  /// Pretty-prints a `[String: Any]` (one level deep is enough for our
-  /// needs) for `NSLog`. Avoids JSONSerialization because some values
-  /// (Bool, NSDictionary) round-trip oddly through it; we just want a
-  /// readable string in the Xcode console.
-  static func prettyPrint(_ dict: [String: Any]) -> String {
-    return dict
-      .sorted { $0.key < $1.key }
-      .map { (k, v) in "\n  \(k) = \(v)" }
-      .joined()
-  }
-
-  /// String name of a `RegistrationError` enum case. Mirrored on the Dart
-  /// side as `details["case"]`. We don't rely on `String(describing:)`
-  /// directly because it can include the enum's namespace prefix on some
-  /// builds.
-  /// String name of a `DeviceSessionError` case. Mirrored on the Dart
-  /// side as `details["case"]`. Keeps the unexpectedError payload in the
-  /// caseName so downstream UI can show the SDK's free-form reason
-  /// without parsing `errorDescription`.
-  static func deviceSessionErrorCaseName(_ error: DeviceSessionError) -> String {
-    // Derived from `String(describing:)` so this keeps compiling across SDK
-    // releases that add cases (DAT 0.7.0 added
-    // `datAppOnTheGlassesUpdateRequired`). The raw value is already a readable
-    // case label, e.g. `noEligibleDevice` or `unexpectedError(...)`.
-    return String(describing: error)
-  }
-
-  static func registrationErrorCaseName(_ error: RegistrationError) -> String {
-    switch error {
-    case .alreadyRegistered: return "alreadyRegistered"
-    case .configurationInvalid: return "configurationInvalid"
-    case .metaAINotInstalled: return "metaAINotInstalled"
-    case .networkUnavailable: return "networkUnavailable"
-    case .unknown: return "unknown"
-    @unknown default: return "unknown(\(error.rawValue))"
+    if let error = Self.configureError { map["configureError"] = error }
+    if Self.configured {
+      map["registrationState"] = registration.registrationState()
+      map["devices"] = deviceState.allDevices()
+      if let device = hub.sessionDevice() { map["sessionDevice"] = device }
+    } else {
+      map["registrationState"] = "unavailable"
+      map["devices"] = [[String: Any]]()
     }
+    return map
   }
 
-  /// String name of an `UnregistrationError` case, used as the typed
-  /// sub-code on the Dart side.
-  static func unregistrationErrorCaseName(_ error: UnregistrationError) -> String {
-    switch error {
-    case .alreadyUnregistered: return "alreadyUnregistered"
-    case .configurationInvalid: return "configurationInvalid"
-    case .metaAINotInstalled: return "metaAINotInstalled"
-    case .unknown: return "unknown"
-    @unknown default: return "unknown(\(error.rawValue))"
-    }
-  }
-
-  /// String name of a `WearablesHandleURLError` case, used as the typed
-  /// sub-code on the Dart side.
-  static func handleUrlErrorCaseName(_ error: WearablesHandleURLError) -> String {
-    switch error {
-    case .registrationError: return "registrationError"
-    case .unregistrationError: return "unregistrationError"
-    @unknown default: return "unknown(\(error.rawValue))"
-    }
-  }
-
-  /// Returns a list of `DeviceInfo` maps for every paired device the SDK
-  /// currently knows about. Shape matches `DeviceInfo.fromMap` on Dart.
-  @MainActor
-  static func encodeAllDevices() -> [[String: Any]] {
-    return Wearables.shared.devices.map { id in
-      let device = Wearables.shared.deviceForIdentifier(id)
-      let name = device?.nameOrId() ?? id
-      let linkStateName: String
-      switch device?.linkState {
-      case .disconnected?: linkStateName = "disconnected"
-      case .connecting?: linkStateName = "connecting"
-      case .connected?: linkStateName = "connected"
-      case nil: linkStateName = "unknown"
-      @unknown default: linkStateName = "unknown"
-      }
-      return [
-        "uuid": id,
-        "name": name,
-        "kind": Self.kindName(for: device?.deviceType()),
-        "linkState": linkStateName,
-      ]
-    }
-  }
-
-  @MainActor
-  static func kindName(for deviceType: DeviceType?) -> String {
-    switch deviceType {
-    case .rayBanMeta?, .rayBanMetaOptics?: return "rayBanMeta"
-    case .metaRayBanDisplay?: return "rayBanDisplay"
-    case .oakleyMetaHSTN?, .oakleyMetaVanguard?: return "oakleyMeta"
-    case .unknown?, .none: return "unknown"
-    @unknown default: return "unknown"
+  public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+    NotificationCenter.default.removeObserver(self)
+    Task { @MainActor in
+      self.registration.dropPendingRequests()
+      await self.voice.stop()
+      await self.inputs.stop()
+      await self.motion.stop()
+      await self.speech.stop()
+      await self.display.stopDisplaySession()
+      await self.camera.stopSession()
+      await self.hub.stopAll()
     }
   }
 }
 
-// MARK: - Passthrough stream handler
+/// Stream handler used for every channel when `Wearables.configure()`
+/// failed: reports the configuration error to the Dart listener.
+private final class NotConfiguredStreamHandler: NSObject, FlutterStreamHandler {
+  private let message: String?
+  init(message: String?) { self.message = message }
 
-/// Tiny `FlutterStreamHandler` that simply hands its EventSink to a callback.
-/// Used by the streaming pipeline so the session manager - rather than this
-/// handler - owns when to emit values.
-///
-/// Re-fires `onSinkChange` whenever the callback is re-assigned so the
-/// session manager catches up on listeners that subscribed before it was
-/// lazily built.
-private final class PassthroughStreamHandler: NSObject, FlutterStreamHandler {
-  var onSinkChange: ((FlutterEventSink?) -> Void)? {
-    didSet { onSinkChange?(sink) }
-  }
-  private var sink: FlutterEventSink?
-
-  func onListen(
-    withArguments arguments: Any?,
-    eventSink events: @escaping FlutterEventSink
-  ) -> FlutterError? {
-    sink = events
-    onSinkChange?(events)
-    return nil
+  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    WireError(
+      category: WireCategory.plugin, caseName: "wearablesNotConfigured",
+      message: "Wearables.configure() failed: \(message ?? "unknown error").").flutterError
   }
 
-  func onCancel(withArguments arguments: Any?) -> FlutterError? {
-    sink = nil
-    onSinkChange?(nil)
-    return nil
-  }
-}
-
-// MARK: - Stream handlers
-
-/// Forwards `Wearables.shared.registrationStateStream()` events to a Flutter
-/// EventSink as `Int` values matching `RegistrationState.fromInt` on the
-/// Dart side. Seeds the initial value so a brand-new listener does not need
-/// to wait for the next state change.
-private final class RegistrationStateStreamHandler: NSObject, FlutterStreamHandler {
-  private var task: Task<Void, Never>?
-
-  func onListen(
-    withArguments arguments: Any?,
-    eventSink events: @escaping FlutterEventSink
-  ) -> FlutterError? {
-    task?.cancel()
-    task = Task { @MainActor in
-      // Seed the current value first so UI built on `StreamBuilder` shows
-      // the correct state on initial subscribe.
-      events(Wearables.shared.registrationState.rawValue)
-      for await state in Wearables.shared.registrationStateStream() {
-        if Task.isCancelled { break }
-        events(state.rawValue)
-      }
-    }
-    return nil
-  }
-
-  func onCancel(withArguments arguments: Any?) -> FlutterError? {
-    task?.cancel()
-    task = nil
-    return nil
-  }
-}
-
-/// Forwards `AutoDeviceSelector` events to a Flutter EventSink as either
-/// a serialised `DeviceInfo` map or `nil` when no device is active.
-/// Long-lived: created once and held by the plugin instance.
-private final class ActiveDeviceStreamHandler: NSObject, FlutterStreamHandler {
-  private var task: Task<Void, Never>?
-  private var selector: AutoDeviceSelector?
-
-  func onListen(
-    withArguments arguments: Any?,
-    eventSink events: @escaping FlutterEventSink
-  ) -> FlutterError? {
-    task?.cancel()
-    let auto = AutoDeviceSelector(wearables: Wearables.shared)
-    selector = auto
-
-    task = Task { @MainActor in
-      // Seed the current value to avoid the "stuck waiting for first event"
-      // case when a device is already attached at subscribe time.
-      events(Self.encode(auto.activeDevice))
-      for await deviceId in auto.activeDeviceStream() {
-        if Task.isCancelled { break }
-        events(Self.encode(deviceId))
-      }
-    }
-    return nil
-  }
-
-  func onCancel(withArguments arguments: Any?) -> FlutterError? {
-    task?.cancel()
-    task = nil
-    selector = nil
-    return nil
-  }
-
-  /// Serialises a `DeviceIdentifier` (typealias for `String`) to the map
-  /// shape that `DeviceInfo.fromMap` expects on the Dart side. Returns
-  /// `NSNull` so the Flutter codec emits a Dart `null` when no device is
-  /// active.
-  @MainActor
-  private static func encode(_ id: DeviceIdentifier?) -> Any {
-    guard let id else { return NSNull() }
-    let device = Wearables.shared.deviceForIdentifier(id)
-    let name = device?.nameOrId() ?? id
-    let linkStateName: String
-    switch device?.linkState {
-    case .disconnected?: linkStateName = "disconnected"
-    case .connecting?: linkStateName = "connecting"
-    case .connected?: linkStateName = "connected"
-    case nil: linkStateName = "unknown"
-    @unknown default: linkStateName = "unknown"
-    }
-    return [
-      "uuid": id,
-      "name": name,
-      "kind": MetaWearablesDatPlugin.kindName(for: device?.deviceType()),
-      "linkState": linkStateName,
-    ] as [String: Any]
-  }
-}
-
-/// Forwards `Wearables.shared.devicesStream()` events as the full list of
-/// paired devices (active or not) on the
-/// `meta_wearables_dat_flutter/devices` channel. Seeds the current value so
-/// fresh subscribers do not need to wait for the next change.
-private final class DevicesStreamHandler: NSObject, FlutterStreamHandler {
-  private var task: Task<Void, Never>?
-
-  func onListen(
-    withArguments arguments: Any?,
-    eventSink events: @escaping FlutterEventSink
-  ) -> FlutterError? {
-    task?.cancel()
-    task = Task { @MainActor in
-      events(MetaWearablesDatPlugin.encodeAllDevices())
-      for await _ in Wearables.shared.devicesStream() {
-        if Task.isCancelled { break }
-        events(MetaWearablesDatPlugin.encodeAllDevices())
-      }
-    }
-    return nil
-  }
-
-  func onCancel(withArguments arguments: Any?) -> FlutterError? {
-    task?.cancel()
-    task = nil
-    return nil
-  }
-}
-
-/// Forwards per-device `Compatibility` updates on the
-/// `meta_wearables_dat_flutter/compatibility` channel. Listens to
-/// `Wearables.shared.devicesStream()` for the paired-device set and attaches
-/// `Device.addCompatibilityListener` to each new device, dropping the
-/// listener when a device disappears. Seeds the current verdict for every
-/// already-paired device.
-private final class CompatibilityStreamHandler: NSObject, FlutterStreamHandler {
-  private var task: Task<Void, Never>?
-  private var tokens: [DeviceIdentifier: any AnyListenerToken] = [:]
-
-  func onListen(
-    withArguments arguments: Any?,
-    eventSink events: @escaping FlutterEventSink
-  ) -> FlutterError? {
-    task?.cancel()
-    task = Task { @MainActor [weak self] in
-      // Seed for every currently-known device.
-      self?.refreshListeners(events: events)
-      for await _ in Wearables.shared.devicesStream() {
-        if Task.isCancelled { break }
-        self?.refreshListeners(events: events)
-      }
-    }
-    return nil
-  }
-
-  func onCancel(withArguments arguments: Any?) -> FlutterError? {
-    task?.cancel()
-    task = nil
-    Task { @MainActor [tokens] in
-      for token in tokens.values { await token.cancel() }
-    }
-    tokens = [:]
-    return nil
-  }
-
-  @MainActor
-  private func refreshListeners(events: @escaping FlutterEventSink) {
-    let live = Set(Wearables.shared.devices)
-    // Drop listeners for devices that are no longer paired.
-    for id in tokens.keys where !live.contains(id) {
-      if let token = tokens.removeValue(forKey: id) {
-        Task { await token.cancel() }
-      }
-    }
-    // Attach a listener for each new device, seeding its current verdict.
-    for id in live where tokens[id] == nil {
-      guard let device = Wearables.shared.deviceForIdentifier(id) else { continue }
-      events(CompatibilityStreamHandler.encode(
-        deviceUuid: id,
-        compatibility: device.compatibility(),
-      ))
-      tokens[id] = device.addCompatibilityListener { [weak self] compat in
-        Task { @MainActor in
-          _ = self
-          events(CompatibilityStreamHandler.encode(
-            deviceUuid: id,
-            compatibility: compat,
-          ))
-        }
-      }
-    }
-  }
-
-  private static func encode(
-    deviceUuid: String,
-    compatibility: Compatibility,
-  ) -> [String: Any] {
-    let name: String
-    switch compatibility {
-    case .compatible: name = "compatible"
-    case .deviceUpdateRequired: name = "deviceUpdateRequired"
-    case .sdkUpdateRequired: name = "sdkUpdateRequired"
-    case .undefined: name = "unknown"
-    @unknown default: name = "unknown"
-    }
-    return [
-      "deviceUuid": deviceUuid,
-      "compatibility": name,
-    ]
-  }
+  func onCancel(withArguments arguments: Any?) -> FlutterError? { nil }
 }
