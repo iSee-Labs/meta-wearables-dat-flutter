@@ -172,6 +172,8 @@ jobs:
   integration-ios:
     name: Integration (iOS Simulator, Mock Device Kit)
     runs-on: macos-26
+    # Emulator/simulator boots can hang; the suite itself takes ~6 minutes.
+    timeout-minutes: 30
     needs: ios
     steps:
       - uses: actions/checkout@v4
@@ -204,6 +206,8 @@ jobs:
   integration-android:
     name: Integration (Android emulator, Mock Device Kit)
     runs-on: ubuntu-latest
+    # Emulator/simulator boots can hang; the suite itself takes ~6 minutes.
+    timeout-minutes: 30
     needs: android
     steps:
       - uses: actions/checkout@v4
