@@ -22,7 +22,7 @@ error model need changes before your app compiles or behaves correctly.
 
 ```yaml
 dependencies:
-  meta_wearables_dat_flutter: ^1.0.0
+  meta_wearables_dat_flutter: ^1.0.0 # release candidates: 1.0.0-rc.1
 ```
 
 ## 2. iOS

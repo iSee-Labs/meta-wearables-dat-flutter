@@ -25,7 +25,7 @@ void main() {
 
   testWidgets('diagnostics report versions and an idle plugin', (tester) async {
     final diagnostics = await MetaWearablesDat.dumpDiagnostics();
-    expect(diagnostics.pluginVersion, '1.0.0');
+    expect(diagnostics.pluginVersion, startsWith('1.0.'));
     expect(diagnostics.sdkVersion, '1.0.0');
     expect(diagnostics.platform, Platform.isIOS ? 'ios' : 'android');
     expect(diagnostics.experimentalModulesLinked['inputs'], isTrue);

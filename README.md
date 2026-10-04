@@ -67,7 +67,7 @@ version number five times.
 
 ```yaml
 dependencies:
-  meta_wearables_dat_flutter: ^1.0.0
+  meta_wearables_dat_flutter: ^1.0.0 # release candidates: 1.0.0-rc.1
 ```
 
 ```bash

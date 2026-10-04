@@ -28,6 +28,7 @@ class _MyAppState extends State<MyApp> {
   StreamSessionState _sessionState = StreamSessionState.stopped;
   VideoStreamSize? _videoSize;
   int? _textureId;
+  Uint8List? _photo;
   String? _lastError;
 
   StreamSubscription<RegistrationState>? _registrationSub;
@@ -74,7 +75,21 @@ class _MyAppState extends State<MyApp> {
     try {
       await body();
     } on DatError catch (e) {
-      _showError('$label: ${e.code} ${e.message}');
+      // Typed errors carry a suggested next step for the user.
+      final hint = switch (e.recoveryAction) {
+        DatRecoveryAction.connectGlasses =>
+          ' Put the glasses on and open them.',
+        DatRecoveryAction.grantPermission =>
+          ' Grant the permission in Meta AI.',
+        DatRecoveryAction.openFirmwareUpdate => ' Update the glasses firmware.',
+        DatRecoveryAction.openDatGlassesAppUpdate =>
+          ' Update the DAT app on the glasses.',
+        DatRecoveryAction.checkMetaAiAndRetry => ' Check Meta AI and retry.',
+        DatRecoveryAction.updateHostApp => ' Update this app.',
+        DatRecoveryAction.suggestUpdate => ' An update is recommended.',
+        DatRecoveryAction.none => '',
+      };
+      _showError('$label: ${e.category}/${e.code} ${e.message}$hint');
     } on PlatformException catch (e) {
       _showError('$label: ${e.code} ${e.message ?? ''}');
     } catch (e) {
@@ -120,6 +135,11 @@ class _MyAppState extends State<MyApp> {
     setState(() => _textureId = null);
   }, label: 'stopStreamSession');
 
+  Future<void> _capturePhoto() => _safeCall(() async {
+    final photo = await MetaWearablesDat.capturePhoto();
+    setState(() => _photo = photo.bytes);
+  }, label: 'capturePhoto');
+
   @override
   Widget build(BuildContext context) {
     final registered = _registrationState == RegistrationState.registered;
@@ -136,7 +156,11 @@ class _MyAppState extends State<MyApp> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text('Registration: ${_registrationState.name}'),
-                Text('Active device: ${_activeDevice?.name ?? 'none'}'),
+                Text(
+                  'Active device: ${_activeDevice?.name ?? 'none'}'
+                  '${_activeDevice?.batteryLevel != null ? '  ${_activeDevice!.batteryLevel}%' : ''}'
+                  '${_activeDevice != null ? '  ${_activeDevice!.linkState.name}' : ''}',
+                ),
                 Text(
                   'Session: ${_sessionState.name}'
                   '${_videoSize != null ? '  ${_videoSize!.width}x${_videoSize!.height}' : ''}',
@@ -200,6 +224,15 @@ class _MyAppState extends State<MyApp> {
                       child: Texture(textureId: _textureId!),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonal(
+                    onPressed: _capturePhoto,
+                    child: const Text('Capture photo'),
+                  ),
+                ],
+                if (_photo != null) ...[
+                  const SizedBox(height: 16),
+                  Image.memory(_photo!, gaplessPlayback: true),
                 ],
                 if (_lastError != null) ...[
                   const SizedBox(height: 16),
