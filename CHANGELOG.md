@@ -152,6 +152,10 @@ Meta's first stable, supported release. This is a breaking release; follow
 
 ### Fixed
 
+- iOS: display icons never resolved. `DisplayIcon` always rendered the
+  checkmark and `DisplayButton.iconName` was dropped, because the SDK's
+  `IconName` raw values are snake_case while the Dart names are camelCase
+  (#1). All 116 icons are now mapped and covered by native tests.
 - Typed `is*` getters on errors never matched.
 - Android: `handleUrl()` never called the SDK.
 - Android: `capturePhoto(format:)` was ignored.
