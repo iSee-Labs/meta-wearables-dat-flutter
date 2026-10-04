@@ -409,6 +409,9 @@ deprecated. See the [migration guide](migration_0.7_to_1.0.md).
      build on an iOS 18 device.
    - Plugin use itself is unaffected; the Flutter integration tests pass
      on iOS 18.
+
+   A ready-to-file report for Meta is in
+   [`meta_issue_objc_copyClassList.md`](meta_issue_objc_copyClassList.md).
 2. **Android display stop.** Calling the SDK's `display.stop()` before
    `removeDisplay` can throw a `NullPointerException` inside Meta's SDK.
    The plugin detaches with `removeDisplay()` only. No action needed.

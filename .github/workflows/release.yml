@@ -17,7 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.x
+          channel: stable
+      - run: flutter pub get
       - name: Tag matches every version declaration
         run: dart run tool/check_versions.dart --tag "${GITHUB_REF_NAME}"
 
@@ -33,13 +37,13 @@ jobs:
       id-token: write # OIDC token for pub.dev
     steps:
       - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: 3.47.x
           channel: stable
       - run: flutter pub get
       - name: Publish
+        # pub exchanges the GitHub OIDC token for a pub.dev token itself.
         run: flutter pub publish --force
 
   github-release:

@@ -62,3 +62,5 @@ local.properties
 key.properties
 *.jks
 *.keystore
+# Maintainer-only material.
+doc/meta_issue_objc_copyClassList.md

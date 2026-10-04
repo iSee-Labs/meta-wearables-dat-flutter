@@ -28,6 +28,7 @@ binaries that this plugin depends on.
 | Meta DAT version | **1.0.0** (Meta's first stable, supported release) |
 | Distribution | Developer Mode and the invite-only **Beta release channel** in the [Wearables Developer Center](https://wearables.developer.meta.com/). Meta does not yet support publishing DAT apps to the App Store. |
 | Developer Center | Create a **new app version** for builds made with DAT 1.0. |
+| Verification | 1.0.0 is verified against Meta's Mock Device Kit on the iOS Simulator and Android emulator, plus unit tests on every layer. The real-glasses matrix in [`doc/release_checklist.md`](doc/release_checklist.md) is still open; report hardware findings as issues. |
 
 ## Features
 
